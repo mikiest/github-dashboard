@@ -28,4 +28,8 @@ export interface PREnriched extends PRLight {
   additions?: number;
   deletions?: number;
   changedFiles?: number;
+  lastReviewedAt?: string | null;
+  state?: 'open' | 'merged';
+  mergedAt?: string | null;
+  closedAt?: string | null;
 }
