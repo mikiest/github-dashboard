@@ -10,7 +10,7 @@
   @apply rounded-2xl bg-zinc-900/70 backdrop-blur border border-zinc-800 shadow-soft;
 }
 .badge {
-  @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium;
+  @apply inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[11px] font-medium leading-4;
 }
 .badge-green { @apply bg-green-500/15 text-green-300 border border-green-500/30; }
 .badge-red { @apply bg-red-500/15 text-red-300 border border-red-500/30; }

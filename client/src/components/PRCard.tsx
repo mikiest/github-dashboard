@@ -2,7 +2,13 @@ import { motion } from 'framer-motion'
 import type { PREnriched } from '../types'
 import { fromNow, short, ageClass } from '../lib_time'
 
-type Props = { pr: PREnriched; username: string; isNew: boolean }
+type Props = {
+  pr: PREnriched
+  username: string
+  isNew: boolean
+  pinned: boolean               // NEW
+  onTogglePin: (id: string) => void // NEW
+}
 
 function squares(count: number, cls: string) {
   const capped = Math.min(10, Math.max(0, Math.round(count)))
@@ -15,7 +21,7 @@ function squares(count: number, cls: string) {
   )
 }
 
-export default function PRCard({ pr, username, isNew }: Props) {
+export default function PRCard({ pr, username, isNew, pinned, onTogglePin }: Props) {
   const requested = pr.requestedReviewers?.some(r => r?.toLowerCase() === username.toLowerCase())
   const approved = pr.approvals > 0
 
@@ -23,7 +29,8 @@ export default function PRCard({ pr, username, isNew }: Props) {
   const deletions = pr.deletions ?? 0
   const total = additions + deletions || 1
   const addBlocks = additions > 0 ? Math.max(1, Math.round((additions / total) * 10)) : 0
-  const delBlocks = deletions > 0 ? Math.max(1, Math.round((deletions / total) * 10)) : 0
+  const delBlocks = deletions > 0 ? Math.max(1, Math.round((deletions / total) * 10)) : 0;
+  const branchLabel = `${pr.baseRefName} ← ${pr.headRefName}`;
 
   return (
     <motion.a
@@ -40,12 +47,23 @@ export default function PRCard({ pr, username, isNew }: Props) {
         <div className="flex-1 min-w-0">
           {/* top row: repo + branches (plain text) + badges */}
           <div className="flex flex-wrap items-center gap-2 min-w-0">
+            <button
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin(pr.id) }}
+              title={pinned ? 'Unpin' : 'Pin'}
+              className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[11px] 
+                          ${pinned ? 'border-amber-400 bg-amber-500/20 text-amber-200' : 'border-zinc-700 hover:bg-zinc-800 text-zinc-300'}`}
+            >
+              📌
+            </button>
             <span className="text-zinc-400 text-xs truncate">{pr.repo}</span>
-            <span className="text-[11px] font-mono text-zinc-400 truncate">
-              {pr.baseRefName} ← {pr.headRefName}
+            <span
+              className="text-xs font-mono text-zinc-400 inline-block max-w-[300px] truncate align-bottom"
+              title={branchLabel}
+            >
+              {branchLabel}
             </span>
             {pr.isDraft && <span className="badge badge-slate">Draft</span>}
-            {approved && <span className="badge badge-green">Approved × {pr.approvals}</span>}
+            {approved && <span className="text-xs badge badge-green">Approved × {pr.approvals}</span>}
             {requested && <span className="badge badge-amber">👀 Requested</span>}
             {pr.state === 'merged' && <span className="badge badge-blue">Merged</span>}
           </div>

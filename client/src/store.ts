@@ -28,3 +28,18 @@ export function loadSettings(): Settings {
 export function saveSettings(s: Settings) {
   localStorage.setItem(KEY, JSON.stringify(s))
 }
+
+const PINS_KEY = 'prdash::pins'
+
+export function loadPins(): string[] {
+  try {
+    const raw = localStorage.getItem(PINS_KEY)
+    return raw ? Array.from(new Set(JSON.parse(raw))) : []
+  } catch {
+    return []
+  }
+}
+
+export function savePins(pins: string[]) {
+  localStorage.setItem(PINS_KEY, JSON.stringify(Array.from(new Set(pins))))
+}

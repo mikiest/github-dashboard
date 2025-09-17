@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchPRs } from '../api'
 import type { PREnriched } from '../types'
+import { loadPins, savePins } from '../store'
 import PRCard from './PRCard'
 import dayjs from 'dayjs'
 
@@ -19,6 +20,15 @@ export default function PRList({ org, repos, username, refreshMs }: Props) {
 
   // Keep previous list visible
   const [displayed, setDisplayed] = useState<PREnriched[]>([])
+  const [pins, setPins] = useState<string[]>(loadPins()) // NEW
+
+  const togglePin = (id: string) => {                    // NEW
+    setPins(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [id, ...prev]
+      savePins(next)
+      return next
+    })
+  }
   useEffect(() => { if (data) setDisplayed(data) }, [data])
 
   // New PR detection (skip first render)
@@ -70,6 +80,8 @@ export default function PRList({ org, repos, username, refreshMs }: Props) {
     return dayjs().diff(lastTouch, 'day') > 7
   }
 
+  
+
   const filtered = useMemo(() => {
     let arr = sorted
     if (filterLower) {
@@ -84,20 +96,25 @@ export default function PRList({ org, repos, username, refreshMs }: Props) {
     return arr
   }, [sorted, filterLower, onlyMine, onlyStale, status, username])
 
+  const ordered = useMemo(() => {                        // NEW
+    const set = new Set(pins)
+    const pinned = filtered.filter(p => set.has(p.id))
+    const rest = filtered.filter(p => !set.has(p.id))
+    return [...pinned, ...rest]
+  }, [filtered, pins])
+
   // Pagination
   const [page, setPage] = useState(1)
   const pageSize = 20
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
-  useEffect(() => { setPage(1) }, [filterLower, onlyMine, onlyStale, repos.join(','), org, status])
-  const paged = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page])
+  const pageCount = Math.max(1, Math.ceil(ordered.length / pageSize))
+  useEffect(() => { setPage(1) }, [filterLower, onlyMine, onlyStale, repos.join(','), org, status, pins.join('|')]) // reset when pins/filter change
+  const paged = useMemo(() => ordered.slice((page - 1) * pageSize, page * pageSize), [ordered, page])
 
   // Buckets for "requested reviews" (only relevant for open)
   const reviewRequested = status === 'open'
     ? paged.filter(p => p.requestedReviewers?.some(r => r?.toLowerCase() === username.toLowerCase()))
     : []
-  const others = status === 'open'
-    ? paged.filter(p => !reviewRequested.includes(p))
-    : paged
+  const others = status === 'open' ? paged.filter(p => !reviewRequested.includes(p)) : paged
 
   if (isError) return <div className="text-red-300">Error: {(error as Error).message}</div>
   if (repos.length === 0) return <div className="text-sm text-zinc-400">No favorites selected.</div>
@@ -160,7 +177,7 @@ export default function PRList({ org, repos, username, refreshMs }: Props) {
           <div className="grid gap-3">
             {reviewRequested.map(pr => (
               <div key={pr.id}>
-                <PRCard pr={pr} username={username} isNew={newIds.has(pr.id)} />
+                <PRCard pr={pr} username={username} isNew={newIds.has(pr.id)} pinned={pins.includes(pr.id)} onTogglePin={togglePin} />
               </div>
             ))}
           </div>
@@ -174,7 +191,7 @@ export default function PRList({ org, repos, username, refreshMs }: Props) {
         <div className="grid gap-3">
           {others.map(pr => (
             <div key={pr.id}>
-              <PRCard pr={pr} username={username} isNew={newIds.has(pr.id)} />
+              <PRCard pr={pr} username={username} isNew={newIds.has(pr.id)} pinned={pins.includes(pr.id)} onTogglePin={togglePin} />
             </div>
           ))}
         </div>
