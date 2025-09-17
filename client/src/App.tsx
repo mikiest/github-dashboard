@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import RepoPicker from './components/RepoPicker'
 import PRList from './components/PRList'
+import ReviewersView from './components/ReviewersView'
 import { loadSettings, saveSettings } from './store'
+
 
 export default function App() {
   const [org, setOrg] = useState(loadSettings().org)
   const [username, setUsername] = useState(loadSettings().username)
   const [favorites, setFavorites] = useState<string[]>(loadSettings().favorites)
   const [refreshMs, setRefreshMs] = useState(loadSettings().refreshMs)
+  const [tab, setTab] = useState<'prs'|'reviewers'>('prs')
 
   useEffect(() => {
     saveSettings({ org, username, favorites, refreshMs })
@@ -26,11 +29,11 @@ export default function App() {
           <h1 className="text-2xl font-bold">GitHub PR Dashboard</h1>
           <p className="text-zinc-400 text-sm">Pick repos, set your username, and watch your PRs roll in.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <a href="https://cli.github.com/" target="_blank" rel="noreferrer" className="text-xs opacity-70 hover:opacity-100 underline">Requires GitHub CLI (gh)</a>
+        <div className="inline-flex rounded-full border border-zinc-700 overflow-hidden">
+          <button onClick={() => setTab('prs')} className={`px-3 py-1 text-sm ${tab==='prs' ? 'bg-brand-500/20' : ''}`}>PRs</button>
+          <button onClick={() => setTab('reviewers')} className={`px-3 py-1 text-sm ${tab==='reviewers' ? 'bg-brand-500/20' : ''}`}>Reviewers</button>
         </div>
       </header>
-
       <section className="grid md:grid-cols-3 gap-6">
         <div className="md:col-span-1 card p-4 space-y-5">
           <div>
@@ -71,10 +74,14 @@ export default function App() {
         </div>
 
         <div className="md:col-span-2 card p-4">
-          {canShowPRs ? (
-            <PRList org={org} repos={favorites} username={username} refreshMs={refreshMs} />
+          {tab === 'prs' ? (
+            canShowPRs
+              ? <PRList org={org} repos={favorites} username={username} refreshMs={refreshMs} />
+              : <div className="text-sm text-zinc-400">Select at least one favorite repository to see PRs.</div>
           ) : (
-            <div className="text-sm text-zinc-400">Select at least one favorite repository to see PRs.</div>
+            org
+              ? <ReviewersView org={org} favorites={favorites} />
+              : <div className="text-sm text-zinc-400">Enter an organization to see reviewers.</div>
           )}
         </div>
       </section>

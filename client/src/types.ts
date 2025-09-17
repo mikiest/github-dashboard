@@ -29,3 +29,14 @@ export type PREnriched = {
   mergedAt?: string | null
   closedAt?: string | null
 }
+
+export type ReviewerStat = {
+  user: string
+  total: number
+  approvals: number
+  changesRequested: number
+  comments: number
+  lastReviewAt?: string | null
+  repos: string[]
+}
+

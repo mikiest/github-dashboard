@@ -89,12 +89,12 @@ r${i}: repository(owner: "${esc(owner)}", name: "${esc(name)}") {
   return q;
 }
 
-async function runGraphQL(query: string): Promise<any> {
-  const { stdout } = await execa(ghBin, ["api", "graphql", "-f", `query=${query}`]);
-  // gh returns a top-level JSON with "data" field
-  const parsed = JSON.parse(stdout);
-  return parsed.data ?? parsed;
-}
+// async function runGraphQL(query: string): Promise<any> {
+//   const { stdout } = await execa(ghBin, ["api", "graphql", "-f", `query=${query}`]);
+//   // gh returns a top-level JSON with "data" field
+//   const parsed = JSON.parse(stdout);
+//   return parsed.data ?? parsed;
+// }
 
 export async function ghPRsAcross(
   org: string,
@@ -165,4 +165,126 @@ export async function ghPRsAcross(
   }
 
   return all;
+}
+
+function buildSinceISO(window: "24h" | "7d" | "30d"): string {
+  const ms = { "24h": 24*60*60e3, "7d": 7*24*60*60e3, "30d": 30*24*60*60e3 }[window];
+  return new Date(Date.now() - ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function batch<T>(arr: T[], size: number) {
+  const out: T[][] = [];
+  for (let i=0;i<arr.length;i+=size) out.push(arr.slice(i,i+size));
+  return out;
+}
+
+async function runGraphQL(query: string, vars: Record<string,string|null|undefined> = {}): Promise<any> {
+  const args = ["api","graphql","-f",`query=${query}`];
+  for (const [k,v] of Object.entries(vars)) {
+    if (v != null) args.push("-F", `${k}=${v}`);
+  }
+  const { stdout } = await execa(ghBin, args);
+  const json = JSON.parse(stdout);
+  if (json.errors?.length) throw new Error(JSON.stringify(json.errors));
+  return json.data ?? json;
+}
+
+export async function ghTopReviewers(
+  org: string,
+  repos: string[],
+  window: "24h" | "7d" | "30d"
+): Promise<{ since: string; reviewers: import("./types.js").ReviewerStat[] }> {
+  const since = buildSinceISO(window);
+  const REPO_BATCH = Number(process.env.REPO_BATCH ?? 6); // keep search queries short
+  const SEARCH_PAGE_LIMIT = Number(process.env.SEARCH_PAGE_LIMIT ?? 5); // up to 500 PRs/batch
+
+  // Build batches of repos to avoid query-length limits
+  const repoBatches = batch(repos, REPO_BATCH);
+
+  type NodePR = {
+    number: number;
+    url: string;
+    repository: { nameWithOwner: string };
+    reviews: { nodes: Array<{ state: string; author?: { login?: string }; submittedAt?: string; updatedAt?: string }> };
+  };
+
+  const counts = new Map<string, {
+    user: string; approvals: number; changesRequested: number; comments: number; lastReviewAt: string|null; repos: Set<string>;
+  }>();
+
+  // GraphQL query with variables for search/pagination
+  const QUERY = `
+    query($q:String!, $cursor:String) {
+      rateLimit { remaining resetAt cost }
+      search(query:$q, type: ISSUE, first: 100, after:$cursor) {
+        issueCount
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          ... on PullRequest {
+            number
+            url
+            repository { nameWithOwner }
+            reviews(first: 50) {
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                state
+                author { login }
+                submittedAt
+                updatedAt
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  for (const batchRepos of repoBatches) {
+    // search string: org + date + repos
+    const repoQuals = batchRepos.map(r => `repo:${org}/${r}`).join(" ");
+    const qBase = `org:${org} is:pr updated:>=${since} ${repoQuals}`.trim();
+
+    let cursor: string | null = null;
+    for (let page = 0; page < SEARCH_PAGE_LIMIT; page++) {
+      const data = await runGraphQL(QUERY, { q: qBase, cursor: cursor ?? "" });
+      const search = data.search;
+      const nodes = (search?.nodes ?? []) as NodePR[];
+
+      for (const pr of nodes) {
+        const repoSlug = pr.repository?.nameWithOwner ?? `${org}`;
+        const revNodes = pr.reviews?.nodes ?? [];
+        for (const r of revNodes) {
+          const when = r.submittedAt ?? r.updatedAt ?? null;
+          if (!when || when < since) continue; // outside window
+          const user = r.author?.login ?? "unknown";
+
+          if (!counts.has(user)) {
+            counts.set(user, { user, approvals: 0, changesRequested: 0, comments: 0, lastReviewAt: null, repos: new Set() });
+          }
+          const entry = counts.get(user)!;
+          if (r.state === "APPROVED") entry.approvals++;
+          else if (r.state === "CHANGES_REQUESTED") entry.changesRequested++;
+          else entry.comments++; // COMMENTED or DISMISSED count under comments bucket
+
+          if (!entry.lastReviewAt || when > entry.lastReviewAt) entry.lastReviewAt = when;
+          entry.repos.add(repoSlug);
+        }
+      }
+
+      if (!search?.pageInfo?.hasNextPage) break;
+      cursor = search.pageInfo.endCursor;
+    }
+  }
+
+  const reviewers = Array.from(counts.values()).map(e => ({
+    user: e.user,
+    total: e.approvals + e.changesRequested + e.comments,
+    approvals: e.approvals,
+    changesRequested: e.changesRequested,
+    comments: e.comments,
+    lastReviewAt: e.lastReviewAt,
+    repos: Array.from(e.repos).sort(),
+  })).sort((a,b) => b.total - a.total || (b.lastReviewAt??'').localeCompare(a.lastReviewAt??''));
+
+  return { since, reviewers };
 }

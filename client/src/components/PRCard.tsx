@@ -37,7 +37,7 @@ export default function PRCard({ pr, username, isNew, pinned, onTogglePin }: Pro
       href={pr.url}
       target="_blank"
       rel="noreferrer"
-      className="card block w-full overflow-hidden p-4 hover:bg-zinc-900/90 transition-colors"
+      className="card group block w-full overflow-hidden p-4 hover:bg-zinc-900/90 transition-colors"
       // animation is controlled by parent via isNew; initial false keeps first render calm
       initial={false}
       animate={isNew ? { boxShadow: ['0 0 0 0 rgba(99,102,241,0.6)', '0 0 0 12px rgba(99,102,241,0)'] } : {}}
@@ -47,14 +47,7 @@ export default function PRCard({ pr, username, isNew, pinned, onTogglePin }: Pro
         <div className="flex-1 min-w-0">
           {/* top row: repo + branches (plain text) + badges */}
           <div className="flex flex-wrap items-center gap-2 min-w-0">
-            <button
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin(pr.id) }}
-              title={pinned ? 'Unpin' : 'Pin'}
-              className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[11px] 
-                          ${pinned ? 'border-amber-400 bg-amber-500/20 text-amber-200' : 'border-zinc-700 hover:bg-zinc-800 text-zinc-300'}`}
-            >
-              📌
-            </button>
+            
             <span className="text-zinc-400 text-xs truncate">{pr.repo}</span>
             <span
               className="text-xs font-mono text-zinc-400 inline-block max-w-[300px] truncate align-bottom"
@@ -91,6 +84,19 @@ export default function PRCard({ pr, username, isNew, pinned, onTogglePin }: Pro
             +{pr.additions ?? 0} / -{pr.deletions ?? 0} • {pr.changedFiles ?? 0} files
           </div>
         </div>
+        <button
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin(pr.id) }}
+        aria-pressed={pinned}
+        aria-label={pinned ? 'Unpin PR' : 'Pin PR'}
+        title={pinned ? 'Unpin' : 'Pin'}
+        className={`absolute bottom-3 right-3 z-10 rounded-full border px-2 py-0.5 text-[11px] transition-opacity
+          ${pinned
+            ? 'border-amber-400 bg-amber-500/20 text-amber-200 opacity-100'
+            : 'border-zinc-700 bg-zinc-900/70 text-zinc-300 opacity-0 group-hover:opacity-100 focus:opacity-100'
+          }`}
+      >
+        📌
+      </button>
       </div>
     </motion.a>
   )

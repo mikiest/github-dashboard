@@ -33,3 +33,13 @@ export interface PREnriched extends PRLight {
   mergedAt?: string | null;
   closedAt?: string | null;
 }
+
+export interface ReviewerStat {
+  user: string;
+  total: number;
+  approvals: number;
+  changesRequested: number;
+  comments: number;
+  lastReviewAt?: string | null;
+  repos: string[]; // distinct repos they reviewed in (nameWithOwner or full slug)
+}
