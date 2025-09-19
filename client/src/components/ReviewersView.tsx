@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchTopReviewers } from '../api'
 import type { ReviewerStat } from '../types'
@@ -6,12 +6,12 @@ import { fromNow, short, ageClass } from '../lib_time'
 
 type Props = {
   org: string
-  favorites: string[] // repo names only
+  favorites: string[]
+  windowSel: '24h'|'7d'|'30d'
+  selectedUsers: string[] // NEW
 }
 
-export default function ReviewersView({ org, favorites }: Props) {
-  const [windowSel, setWindowSel] = useState<'24h'|'7d'|'30d'>('24h')
-
+export default function ReviewersView({ org, favorites, windowSel, selectedUsers }: Props) {
   const { data, isFetching, refetch, isError, error } = useQuery({
     queryKey: ['top-reviewers', org, windowSel, ...[...favorites].sort()],
     queryFn: () => fetchTopReviewers(org, favorites, windowSel),
@@ -20,10 +20,17 @@ export default function ReviewersView({ org, favorites }: Props) {
   })
 
   const reviewers = (data?.reviewers ?? []) as ReviewerStat[]
+  const filteredByUsers = useMemo(() => {
+    if (!selectedUsers?.length) return reviewers
+    const set = new Set(selectedUsers.map(s => s.toLowerCase()))
+    return reviewers.filter(r => set.has(r.user.toLowerCase()))
+  }, [reviewers, selectedUsers])
+
   const sorted = useMemo(
-    () => [...reviewers].sort((a,b) => b.total - a.total || (b.lastReviewAt ?? '').localeCompare(a.lastReviewAt ?? '')),
-    [reviewers]
+    () => [...filteredByUsers].sort((a,b) => b.total - a.total || (b.lastReviewAt ?? '').localeCompare(a.lastReviewAt ?? '')),
+    [filteredByUsers]
   )
+
   const since = data?.since
   const medal = (i: number) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '')
 
@@ -33,10 +40,10 @@ export default function ReviewersView({ org, favorites }: Props) {
       <div className="flex items-center justify-between gap-3">
         <div className="inline-flex rounded-full border border-zinc-700 overflow-hidden">
           {(['24h','7d','30d'] as const).map(w => (
-            <button
-              key={w}
-              onClick={() => setWindowSel(w)}
+            <button key={w}
+              onClick={() => refetch()} // refetch will run anyway via queryKey change from parent windowSel
               className={`px-3 py-1 text-xs ${windowSel===w ? 'bg-brand-500/20' : ''}`}
+              disabled={windowSel!==w}
             >
               {w}
             </button>
@@ -53,7 +60,6 @@ export default function ReviewersView({ org, favorites }: Props) {
         </button>
       </div>
 
-      {/* Table */}
       <div className="card p-4 overflow-x-auto">
         {isError ? (
           <div className="text-red-300">Error: {(error as Error).message}</div>
@@ -75,18 +81,19 @@ export default function ReviewersView({ org, favorites }: Props) {
               {sorted.map((r, i) => (
                 <tr key={r.user} className="border-t border-zinc-800">
                   <td className="py-2 font-medium">
-                    <span aria-hidden className="mr-1 text-[16px] leading-none align-middle">
-                      {medal(i)}
-                    </span>
+                    <span aria-hidden className="mr-1 text-[16px] leading-none align-middle">{medal(i)}</span>
                     <a
                       href={`https://github.com/${encodeURIComponent(r.user)}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="underline decoration-dotted underline-offset-2"
+                      className="text-zinc-200 hover:opacity-90"   // no underline now
                       title={`Open ${r.user} on GitHub`}
                     >
                       {r.user}
                     </a>
+                    {r.displayName && (
+                      <div className="text-xs text-zinc-400">{r.displayName}</div>
+                    )}
                   </td>
                   <td className="py-2">{r.total}</td>
                   <td className="py-2">{r.approvals}</td>

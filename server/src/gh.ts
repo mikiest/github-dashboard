@@ -1,5 +1,5 @@
 import { execa } from "execa";
-import type { PREnriched, PRLight, Repo } from "./types";
+import type { PREnriched, Repo, ReviewerStat } from "./types.js";
 
 // Keep your existing ghRepos() (CLI list). You can migrate it later if you want.
 // --- Repo list via CLI (unchanged) ---
@@ -193,7 +193,7 @@ export async function ghTopReviewers(
   org: string,
   repos: string[],
   window: "24h" | "7d" | "30d"
-): Promise<{ since: string; reviewers: import("./types.js").ReviewerStat[] }> {
+): Promise<{ since: string; reviewers: ReviewerStat[] }> {
   const since = buildSinceISO(window);
   const REPO_BATCH = Number(process.env.REPO_BATCH ?? 6); // keep search queries short
   const SEARCH_PAGE_LIMIT = Number(process.env.SEARCH_PAGE_LIMIT ?? 5); // up to 500 PRs/batch
@@ -209,7 +209,7 @@ export async function ghTopReviewers(
   };
 
   const counts = new Map<string, {
-    user: string; approvals: number; changesRequested: number; comments: number; lastReviewAt: string|null; repos: Set<string>;
+    user: string; approvals: number; displayName: string; changesRequested: number; comments: number; lastReviewAt: string|null; repos: Set<string>;
   }>();
 
   // GraphQL query with variables for search/pagination
@@ -224,11 +224,14 @@ export async function ghTopReviewers(
             number
             url
             repository { nameWithOwner }
-            reviews(first: 50) {
+            reviews(first: 100) {
               pageInfo { hasNextPage endCursor }
               nodes {
                 state
-                author { login }
+                author {
+                  login
+                  ... on User { name }   # <-- adds full name in the same query
+                }
                 submittedAt
                 updatedAt
               }
@@ -257,11 +260,22 @@ export async function ghTopReviewers(
           const when = r.submittedAt ?? r.updatedAt ?? null;
           if (!when || when < since) continue; // outside window
           const user = r.author?.login ?? "unknown";
+          const name = (r.author as any)?.name ?? null;
 
           if (!counts.has(user)) {
-            counts.set(user, { user, approvals: 0, changesRequested: 0, comments: 0, lastReviewAt: null, repos: new Set() });
+            counts.set(user, {
+              user,
+              approvals: 0,
+              changesRequested: 0,
+              comments: 0,
+              lastReviewAt: null,
+              repos: new Set<string>(),
+              displayName: name,
+            } as any);
           }
-          const entry = counts.get(user)!;
+          const entry = counts.get(user)! as any;
+          if (name && !entry.displayName) entry.displayName = name;
+
           if (r.state === "APPROVED") entry.approvals++;
           else if (r.state === "CHANGES_REQUESTED") entry.changesRequested++;
           else entry.comments++; // COMMENTED or DISMISSED count under comments bucket
@@ -276,15 +290,17 @@ export async function ghTopReviewers(
     }
   }
 
-  const reviewers = Array.from(counts.values()).map(e => ({
+  const reviewers: ReviewerStat[] = Array.from(counts.values()).map(e => ({
     user: e.user,
+    displayName: e.displayName ?? null,
     total: e.approvals + e.changesRequested + e.comments,
     approvals: e.approvals,
     changesRequested: e.changesRequested,
     comments: e.comments,
     lastReviewAt: e.lastReviewAt,
     repos: Array.from(e.repos).sort(),
-  })).sort((a,b) => b.total - a.total || (b.lastReviewAt??'').localeCompare(a.lastReviewAt??''));
+  }))
+  .sort((a,b) => b.total - a.total || (b.lastReviewAt??'').localeCompare(a.lastReviewAt??''));
 
   return { since, reviewers };
 }

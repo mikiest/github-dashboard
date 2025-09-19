@@ -32,6 +32,7 @@ export type PREnriched = {
 
 export type ReviewerStat = {
   user: string
+  displayName?: string | null
   total: number
   approvals: number
   changesRequested: number

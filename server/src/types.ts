@@ -36,6 +36,7 @@ export interface PREnriched extends PRLight {
 
 export interface ReviewerStat {
   user: string;
+  displayName?: string | null;
   total: number;
   approvals: number;
   changesRequested: number;

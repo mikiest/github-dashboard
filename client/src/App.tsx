@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import RepoPicker from './components/RepoPicker'
 import PRList from './components/PRList'
 import ReviewersView from './components/ReviewersView'
+import ReviewersSidebar from './components/ReviewersSidebar'
 import { loadSettings, saveSettings } from './store'
 
 
@@ -11,6 +12,8 @@ export default function App() {
   const [favorites, setFavorites] = useState<string[]>(loadSettings().favorites)
   const [refreshMs, setRefreshMs] = useState(loadSettings().refreshMs)
   const [tab, setTab] = useState<'prs'|'reviewers'>('prs')
+  const [reviewWindow, setReviewWindow] = useState<'24h'|'7d'|'30d'>('24h')
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([])
 
   useEffect(() => {
     saveSettings({ org, username, favorites, refreshMs })
@@ -69,8 +72,17 @@ export default function App() {
               />
             </div>
           </div>
-
-          <RepoPicker org={org} favorites={favorites} onToggleFavorite={toggleFav} />
+          {tab === 'reviewers' ? (
+            <ReviewersSidebar
+              org={org}
+              favorites={favorites}
+              windowSel={reviewWindow}
+              selectedUsers={selectedUsers}
+              onChangeSelected={setSelectedUsers}
+            />
+          ) : (
+            <RepoPicker org={org} favorites={favorites} onToggleFavorite={toggleFav} />
+          )}
         </div>
 
         <div className="md:col-span-2 card p-4">
@@ -80,7 +92,7 @@ export default function App() {
               : <div className="text-sm text-zinc-400">Select at least one favorite repository to see PRs.</div>
           ) : (
             org
-              ? <ReviewersView org={org} favorites={favorites} />
+              ? <ReviewersView org={org} favorites={favorites} windowSel={reviewWindow} selectedUsers={selectedUsers}/>
               : <div className="text-sm text-zinc-400">Enter an organization to see reviewers.</div>
           )}
         </div>
