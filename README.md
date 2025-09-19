@@ -7,6 +7,8 @@ A sleek dashboard to monitor Pull Requests across your favorite repositories in 
 * **No GitHub OAuth needed**: you manually set your GitHub username in the UI
 * **Storage**: per-browser via `localStorage` (favorites, settings, pins)
 
+![Screenshot of PR Dashboard](./gh.jpg)
+
 ---
 
 ## ✨ Features
