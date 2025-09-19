@@ -6,8 +6,8 @@ export async function fetchRepos(org: string): Promise<Repo[]> {
   return data.repos
 }
 
-export async function fetchPRs(org: string, repos: string[], states: ('open'|'merged')[] = ['open']): Promise<PREnriched[]> {
-  const { data } = await axios.post<{ prs: PREnriched[] }>(`/api/prs`, { org, repos, states })
+export async function fetchPRs(org: string, repos: string[], states: ('open'|'merged')[] = ['open'], window: '24h' | '7d' | '30d'): Promise<PREnriched[]> {
+  const { data } = await axios.post<{ prs: PREnriched[] }>(`/api/prs`, { org, repos, states, window })
   return data.prs
 }
 

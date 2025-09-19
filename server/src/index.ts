@@ -33,13 +33,14 @@ const PRsBody = z.object({
   org: z.string().min(1),
   repos: z.array(z.string().min(1)).min(1),
   states: z.array(z.enum(['open','merged'])).default(['open']).optional(),
+  window: z.enum(['24h','7d','30d'])
 });
 
 app.post("/api/prs", async (req, res) => {
   try {
     const body = PRsBody.parse(req.body);
     const states = body.states ?? ['open'];
-    const data = await ghPRsAcross(body.org, body.repos, true, states as any);
+    const data = await ghPRsAcross(body.org, body.repos, true, states as any, body.window);
     res.json({ prs: data });
   } catch (e) {
     console.error("prs error:", e);

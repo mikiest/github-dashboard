@@ -45,7 +45,6 @@ export default function ReviewersSidebar({ org, favorites, windowSel, selectedUs
   }
 
   const clear = () => onChangeSelected([])
-  const selectAll = () => onChangeSelected(filtered.map(([login]) => login))
 
   return (
     <div className="space-y-3">
@@ -60,7 +59,6 @@ export default function ReviewersSidebar({ org, favorites, windowSel, selectedUs
       </div>
 
       <div className="flex items-center gap-2 text-xs">
-        <button onClick={selectAll} className="px-2 py-1 rounded-full border border-zinc-700 hover:bg-zinc-800">Select all</button>
         <button onClick={clear} className="px-2 py-1 rounded-full border border-zinc-700 hover:bg-zinc-800">Clear</button>
         {isFetching && <span className="ml-auto text-zinc-400">Loading…</span>}
       </div>

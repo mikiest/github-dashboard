@@ -88,11 +88,11 @@ export default function App() {
         <div className="md:col-span-2 card p-4">
           {tab === 'prs' ? (
             canShowPRs
-              ? <PRList org={org} repos={favorites} username={username} refreshMs={refreshMs} />
+              ? <PRList org={org} repos={favorites} username={username} refreshMs={refreshMs} windowSel={reviewWindow} onChangeSelected={setReviewWindow} />
               : <div className="text-sm text-zinc-400">Select at least one favorite repository to see PRs.</div>
           ) : (
             org
-              ? <ReviewersView org={org} favorites={favorites} windowSel={reviewWindow} selectedUsers={selectedUsers}/>
+              ? <ReviewersView org={org} favorites={favorites} selectedUsers={selectedUsers} windowSel={reviewWindow} onChangeSelected={setReviewWindow}/>
               : <div className="text-sm text-zinc-400">Enter an organization to see reviewers.</div>
           )}
         </div>

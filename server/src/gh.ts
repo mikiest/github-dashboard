@@ -99,8 +99,9 @@ r${i}: repository(owner: "${esc(owner)}", name: "${esc(name)}") {
 export async function ghPRsAcross(
   org: string,
   repos: string[],
-  _withEnrich = true,                       // kept for signature compatibility
-  states: ("open" | "merged")[] = ["open"]
+  _withEnrich = true,
+  states: ('open'|'merged')[] = ['open'],
+  window: '24h'|'7d'|'30d' = '24h'
 ): Promise<PREnriched[]> {
   const batches = chunk(repos, REPO_BATCH);
   const all: PREnriched[] = [];
@@ -164,7 +165,18 @@ export async function ghPRsAcross(
     });
   }
 
-  return all;
+  // apply window filter after fetch
+  const since = buildSinceISO(window);
+  if (!since) return all;
+
+  return all.filter(pr => {
+    if (states.includes('merged') && pr.state === 'merged') {
+      // for merged view: honor mergedAt first, fall back to updatedAt
+      return (pr.mergedAt && pr.mergedAt >= since) || (pr.updatedAt >= since);
+    }
+    // for open view: updatedAt since window
+    return pr.updatedAt >= since;
+  });
 }
 
 function buildSinceISO(window: "24h" | "7d" | "30d"): string {
@@ -230,7 +242,7 @@ export async function ghTopReviewers(
                 state
                 author {
                   login
-                  ... on User { name }   # <-- adds full name in the same query
+                  ... on User { name }
                 }
                 submittedAt
                 updatedAt

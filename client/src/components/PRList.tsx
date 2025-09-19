@@ -6,13 +6,20 @@ import { loadPins, savePins } from '../store'
 import PRCard from './PRCard'
 import dayjs from 'dayjs'
 
-type Props = { org: string; repos: string[]; username: string; refreshMs: number }
+type Props = {
+  org: string;
+  repos: string[];
+  username: string;
+  refreshMs: number
+  windowSel: '24h'|'7d'|'30d'
+  onChangeSelected: (window: '24h'|'7d'|'30d') => void
+}
 
-export default function PRList({ org, repos, username, refreshMs }: Props) {
-  const [status, setStatus] = useState<'open'|'merged'>('open') // NEW
+export default function PRList({ org, repos, username, refreshMs, windowSel, onChangeSelected }: Props) {
+  const [status, setStatus] = useState<'open'|'merged'>('open') 
   const { data, refetch, isFetching, isError, error } = useQuery({
     queryKey: ['prs', org, username, status, ...repos.sort()],
-    queryFn: () => fetchPRs(org, repos, [status]),
+    queryFn: () => fetchPRs(org, repos, [status], windowSel),
     enabled: org.length > 0 && repos.length > 0,
     refetchInterval: refreshMs,
     refetchOnWindowFocus: true,
@@ -20,9 +27,9 @@ export default function PRList({ org, repos, username, refreshMs }: Props) {
 
   // Keep previous list visible
   const [displayed, setDisplayed] = useState<PREnriched[]>([])
-  const [pins, setPins] = useState<string[]>(loadPins()) // NEW
+  const [pins, setPins] = useState<string[]>(loadPins()) 
 
-  const togglePin = (id: string) => {                    // NEW
+  const togglePin = (id: string) => {                    
     setPins(prev => {
       const next = prev.includes(id) ? prev.filter(x => x !== id) : [id, ...prev]
       savePins(next)
@@ -31,7 +38,7 @@ export default function PRList({ org, repos, username, refreshMs }: Props) {
   }
   useEffect(() => { if (data) setDisplayed(data) }, [data])
 
-  // New PR detection (skip first render)
+  // PR detection (skip first render)
   const prevIdsRef = useRef<Set<string>>(new Set())
   const firstLoadRef = useRef(true)
   const [newIds, setNewIds] = useState<Set<string>>(new Set())
@@ -80,7 +87,6 @@ export default function PRList({ org, repos, username, refreshMs }: Props) {
     return dayjs().diff(lastTouch, 'day') > 7
   }
 
-  
 
   const filtered = useMemo(() => {
     let arr = sorted
@@ -96,7 +102,7 @@ export default function PRList({ org, repos, username, refreshMs }: Props) {
     return arr
   }, [sorted, filterLower, onlyMine, onlyStale, status, username])
 
-  const ordered = useMemo(() => {                        // NEW
+  const ordered = useMemo(() => {                        
     const set = new Set(pins)
     const pinned = filtered.filter(p => set.has(p.id))
     const rest = filtered.filter(p => !set.has(p.id))
@@ -123,7 +129,20 @@ export default function PRList({ org, repos, username, refreshMs }: Props) {
     <div className="space-y-6">
       {/* header + controls */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-sm uppercase tracking-wider text-zinc-400">Pull Requests</h3>
+        <div className="inline-flex rounded-full border border-zinc-700 overflow-hidden">
+          {(['24h','7d','30d'] as const).map(w => (
+            <button
+              key={w}
+              onClick={() => onChangeSelected(w)}
+              aria-pressed={windowSel === w}
+              className={`px-3 py-1 text-xs transition ${
+                windowSel === w ? 'bg-brand-500/20' : 'hover:bg-zinc-800'
+              }`}
+            >
+              {w}
+            </button>
+          ))}
+        </div>
         <div className="flex items-center gap-2">
           {/* status toggle */}
           <div className="inline-flex rounded-full border border-zinc-700 overflow-hidden">

@@ -7,11 +7,12 @@ import { fromNow, short, ageClass } from '../lib_time'
 type Props = {
   org: string
   favorites: string[]
+  selectedUsers: string[]
   windowSel: '24h'|'7d'|'30d'
-  selectedUsers: string[] // NEW
+  onChangeSelected: (window: '24h'|'7d'|'30d') => void
 }
 
-export default function ReviewersView({ org, favorites, windowSel, selectedUsers }: Props) {
+export default function ReviewersView({ org, favorites, windowSel, selectedUsers, onChangeSelected }: Props) {
   const { data, isFetching, refetch, isError, error } = useQuery({
     queryKey: ['top-reviewers', org, windowSel, ...[...favorites].sort()],
     queryFn: () => fetchTopReviewers(org, favorites, windowSel),
@@ -40,10 +41,13 @@ export default function ReviewersView({ org, favorites, windowSel, selectedUsers
       <div className="flex items-center justify-between gap-3">
         <div className="inline-flex rounded-full border border-zinc-700 overflow-hidden">
           {(['24h','7d','30d'] as const).map(w => (
-            <button key={w}
-              onClick={() => refetch()} // refetch will run anyway via queryKey change from parent windowSel
-              className={`px-3 py-1 text-xs ${windowSel===w ? 'bg-brand-500/20' : ''}`}
-              disabled={windowSel!==w}
+            <button
+              key={w}
+              onClick={() => onChangeSelected(w)}
+              aria-pressed={windowSel === w}
+              className={`px-3 py-1 text-xs transition ${
+                windowSel === w ? 'bg-brand-500/20' : 'hover:bg-zinc-800'
+              }`}
             >
               {w}
             </button>
