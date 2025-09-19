@@ -156,6 +156,8 @@ cd client && npm run dev
 
 ---
 
+P.S. This is 100% vibe coded for fun - enjoy ❤️
+
 ## 📝 License
 
 MIT
