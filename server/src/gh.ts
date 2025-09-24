@@ -217,7 +217,16 @@ export async function ghTopReviewers(
     number: number;
     url: string;
     repository: { nameWithOwner: string };
-    reviews: { nodes: Array<{ state: string; author?: { login?: string }; submittedAt?: string; updatedAt?: string }> };
+    reviews: {
+      nodes: Array<{
+        databaseId?: number | null;
+        state: string;
+        author?: { login?: string };
+        submittedAt?: string;
+        updatedAt?: string;
+        comments?: { totalCount?: number };
+      }>;
+    };
   };
 
   const counts = new Map<string, {
@@ -239,6 +248,7 @@ export async function ghTopReviewers(
             reviews(first: 100) {
               pageInfo { hasNextPage endCursor }
               nodes {
+                databaseId
                 state
                 author {
                   login
@@ -271,7 +281,13 @@ export async function ghTopReviewers(
       for (const pr of nodes) {
         const repoSlug = pr.repository?.nameWithOwner ?? `${org}`;
         const revNodes = pr.reviews?.nodes ?? [];
+        const seenReviewIds = new Set<number | string>();
         for (const r of revNodes) {
+          const reviewId = (r.databaseId ?? null) as number | null;
+          if (reviewId != null) {
+            if (seenReviewIds.has(reviewId)) continue;
+            seenReviewIds.add(reviewId);
+          }
           const when = r.submittedAt ?? r.updatedAt ?? null;
           if (!when || when < since) continue; // outside window
           const user = r.author?.login ?? "unknown";
@@ -297,7 +313,7 @@ export async function ghTopReviewers(
           else if (r.state === "COMMENTED") {
             entry.commented++;
           }
-          entry.comments += ((r as any).comments?.totalCount ?? 0); 
+          entry.comments += r.comments?.totalCount ?? 0;
 
           if (!entry.lastReviewAt || when > entry.lastReviewAt) entry.lastReviewAt = when;
           entry.repos.add(repoSlug);
