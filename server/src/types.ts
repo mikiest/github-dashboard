@@ -40,9 +40,20 @@ export interface ReviewerStat {
   total: number;
   approvals: number;
   changesRequested: number;
+  commented: number;
   comments: number;
   lastReviewAt?: string | null;
   repos: string[]; // distinct repos they reviewed in (nameWithOwner or full slug)
+}
+
+export interface CommitterStat {
+  user: string;
+  displayName?: string | null;
+  commits: number;
+  additions: number;
+  deletions: number;
+  repos: string[];
+  lastCommitAt?: string | null;
 }
 export interface TeamMember { login: string; name?: string | null }
 export interface OrgTeam { slug: string; name: string; members: TeamMember[] }

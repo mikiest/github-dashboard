@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchTopReviewers, fetchTeams } from '../api'
-import type { ReviewerStat, OrgTeam } from '../types'
+import { fetchTopReviewers, fetchTeams, fetchTopCommitters } from '../api'
+import type { ReviewerStat, OrgTeam, CommitterStat } from '../types'
 
 type Props = {
   org: string
@@ -11,28 +11,56 @@ type Props = {
   selectedTeams: string[]               // team slugs
   onChangeUsers: (users: string[]) => void
   onChangeTeams: (teams: string[]) => void
+  mode?: 'reviewers' | 'committers'
 }
 
 export default function ReviewersSidebar({
   org, favorites, windowSel,
   selectedUsers, selectedTeams,
-  onChangeUsers, onChangeTeams
+  onChangeUsers, onChangeTeams,
+  mode = 'reviewers'
 }: Props) {
-  // reviewers (to list users)
-  const { data: reviewersData } = useQuery({
-    queryKey: ['top-reviewers', org, windowSel, ...[...favorites].sort()],
-    queryFn: () => fetchTopReviewers(org, favorites, windowSel),
+  type Person = { user: string; displayName: string | null }
+
+  // reviewers/committers (to list users)
+  const { data: people = [] } = useQuery<Person[]>({
+    queryKey: [
+      mode === 'reviewers' ? 'top-reviewers' : 'top-committers',
+      org,
+      windowSel,
+      ...[...favorites].sort(),
+    ],
+    queryFn: async () => {
+      if (mode === 'reviewers') {
+        const res = await fetchTopReviewers(org, favorites, windowSel)
+        const reviewers: ReviewerStat[] = res?.reviewers ?? []
+        return reviewers.map(r => ({ user: r.user, displayName: r.displayName ?? null }))
+      }
+      const res = await fetchTopCommitters(org, favorites, windowSel)
+      const committers: CommitterStat[] = res?.committers ?? []
+      return committers.map(c => ({ user: c.user, displayName: c.displayName ?? null }))
+    },
     enabled: !!org && favorites.length > 0,
     refetchOnWindowFocus: true,
-  });
-  const reviewers: ReviewerStat[] = reviewersData?.reviewers ?? []
+  })
+
   const allUsers = useMemo(() => {
     const uniq = new Map<string, string | null>()
-    for (const r of reviewers) uniq.set(r.user, r.displayName ?? null)
-    return Array.from(uniq.keys())
-      .map(login => ({ login, alias: login }))
-      .sort((a,b) => a.alias.localeCompare(b.alias))
-  }, [reviewers])
+    for (const p of people) {
+      if (!uniq.has(p.user)) {
+        uniq.set(p.user, p.displayName)
+      } else if (p.displayName && !uniq.get(p.user)) {
+        uniq.set(p.user, p.displayName)
+      }
+    }
+    return Array.from(uniq.entries())
+      .map(([login, displayName]) => ({ login, displayName }))
+      .sort((a,b) => {
+        const an = a.displayName ?? a.login
+        const bn = b.displayName ?? b.login
+        return an.localeCompare(bn)
+      })
+  }, [people])
 
   // teams list
   const { data: teamsData, isFetching: teamsLoading } = useQuery({
@@ -50,7 +78,10 @@ export default function ReviewersSidebar({
 
   const filteredUsers = useMemo(() => {
     if (!ql) return allUsers
-    return allUsers.filter(u => u.alias.toLowerCase().includes(ql) || u.login.toLowerCase().includes(ql))
+    return allUsers.filter(u => {
+      const name = u.displayName?.toLowerCase() ?? ''
+      return name.includes(ql) || u.login.toLowerCase().includes(ql)
+    })
   }, [allUsers, ql])
 
   const filteredTeams = useMemo(() => {
@@ -93,12 +124,15 @@ export default function ReviewersSidebar({
 
       <div className="max-h-80 overflow-auto pr-2">
         {tab === 'users' ? (
-          filteredUsers.map(({ login, alias }) => {
+          filteredUsers.map(({ login, displayName }) => {
             const on = selectedUsers.includes(login)
             return (
               <label key={login} className="flex items-center justify-between py-2 border-b border-zinc-800">
                 <div className="min-w-0">
-                  <div className="truncate font-medium">{alias}</div>
+                  <div className="truncate font-medium">{displayName ?? login}</div>
+                  {displayName && displayName !== login && (
+                    <div className="text-xs text-zinc-400 truncate">@{login}</div>
+                  )}
                 </div>
                 <input type="checkbox" checked={on} onChange={() => toggleUser(login)} className="accent-brand-500" />
               </label>

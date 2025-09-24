@@ -42,5 +42,15 @@ export type ReviewerStat = {
   repos: string[]
 }
 
+export type CommitterStat = {
+  user: string
+  displayName?: string | null
+  commits: number
+  additions: number
+  deletions: number
+  repos: string[]
+  lastCommitAt?: string | null
+}
+
 export type TeamMember = { login: string; name?: string | null }
 export type OrgTeam = { slug: string; name: string; members: TeamMember[] }
