@@ -1,5 +1,5 @@
 import { execa } from "execa";
-import type { PREnriched, Repo, ReviewerStat } from "./types.js";
+import type { PREnriched, Repo, ReviewerStat, CommitterStat } from "./types.js";
 
 // Keep your existing ghRepos() (CLI list). You can migrate it later if you want.
 // --- Repo list via CLI (unchanged) ---
@@ -217,11 +217,20 @@ export async function ghTopReviewers(
     number: number;
     url: string;
     repository: { nameWithOwner: string };
-    reviews: { nodes: Array<{ state: string; author?: { login?: string }; submittedAt?: string; updatedAt?: string }> };
+    reviews: {
+      nodes: Array<{
+        databaseId?: number | null;
+        state: string;
+        author?: { login?: string };
+        submittedAt?: string;
+        updatedAt?: string;
+        comments?: { totalCount?: number };
+      }>;
+    };
   };
 
   const counts = new Map<string, {
-    user: string; approvals: number; displayName: string; changesRequested: number; comments: number; commented: number; lastReviewAt: string|null; repos: Set<string>;
+    user: string; approvals: number; displayName: string | null; changesRequested: number; comments: number; commented: number; lastReviewAt: string|null; repos: Set<string>;
   }>();
 
   // GraphQL query with variables for search/pagination
@@ -239,6 +248,7 @@ export async function ghTopReviewers(
             reviews(first: 100) {
               pageInfo { hasNextPage endCursor }
               nodes {
+                databaseId
                 state
                 author {
                   login
@@ -271,7 +281,13 @@ export async function ghTopReviewers(
       for (const pr of nodes) {
         const repoSlug = pr.repository?.nameWithOwner ?? `${org}`;
         const revNodes = pr.reviews?.nodes ?? [];
+        const seenReviewIds = new Set<string>();
         for (const r of revNodes) {
+          const reviewKey = r.databaseId != null
+            ? `id:${r.databaseId}`
+            : `fallback:${r.author?.login ?? "unknown"}:${r.submittedAt ?? r.updatedAt ?? ""}`;
+          if (seenReviewIds.has(reviewKey)) continue;
+          seenReviewIds.add(reviewKey);
           const when = r.submittedAt ?? r.updatedAt ?? null;
           if (!when || when < since) continue; // outside window
           const user = r.author?.login ?? "unknown";
@@ -294,10 +310,11 @@ export async function ghTopReviewers(
 
           if (r.state === "APPROVED") entry.approvals++;
           else if (r.state === "CHANGES_REQUESTED") entry.changesRequested++;
-          else if (r.state === "COMMENTED") {
+          else if (r.state === "COMMENTED" || r.state === "DISMISSED") {
             entry.commented++;
           }
-          entry.comments += ((r as any).comments?.totalCount ?? 0); 
+          const commentTotal = r.comments?.totalCount ?? 0;
+          entry.comments += commentTotal;
 
           if (!entry.lastReviewAt || when > entry.lastReviewAt) entry.lastReviewAt = when;
           entry.repos.add(repoSlug);
@@ -323,6 +340,112 @@ export async function ghTopReviewers(
   .sort((a,b) => b.total - a.total || (b.lastReviewAt??'').localeCompare(a.lastReviewAt??''));
 
   return { since, reviewers };
+}
+
+export async function ghTopCommitters(
+  org: string,
+  repos: string[],
+  window: "24h" | "7d" | "30d",
+): Promise<{ since: string; committers: CommitterStat[] }> {
+  const since = buildSinceISO(window);
+  const COMMITS_PAGE_LIMIT = Number(process.env.COMMITS_PAGE_LIMIT ?? 5);
+
+  const QUERY = `
+    query($owner:String!, $name:String!, $since:GitTimestamp!, $cursor:String) {
+      repository(owner:$owner, name:$name) {
+        nameWithOwner
+        defaultBranchRef {
+          name
+          target {
+            __typename
+            ... on Commit {
+              history(first: 100, since: $since, after: $cursor) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  oid
+                  committedDate
+                  author {
+                    user { login name }
+                    name
+                    email
+                  }
+                  additions
+                  deletions
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const counts = new Map<string, {
+    user: string;
+    displayName: string | null;
+    commits: number;
+    additions: number;
+    deletions: number;
+    lastCommitAt: string | null;
+    repos: Set<string>;
+  }>();
+
+  for (const repo of repos) {
+    let cursor: string | null = null;
+    for (let page = 0; page < COMMITS_PAGE_LIMIT; page++) {
+      const data = await runGraphQL(QUERY, {
+        owner: org,
+        name: repo,
+        since,
+        cursor,
+      });
+      const repoData = data?.repository;
+      const repoSlug = repoData?.nameWithOwner ?? `${org}/${repo}`;
+      const history = repoData?.defaultBranchRef?.target?.history;
+      const nodes = history?.nodes ?? [];
+
+      for (const node of nodes) {
+        const when = node?.committedDate ?? null;
+        if (!when || when < since) continue;
+        const login = node?.author?.user?.login ?? node?.author?.email ?? node?.author?.name ?? "unknown";
+        const displayName = node?.author?.user?.name ?? node?.author?.name ?? null;
+        if (!counts.has(login)) {
+          counts.set(login, {
+            user: login,
+            displayName,
+            commits: 0,
+            additions: 0,
+            deletions: 0,
+            lastCommitAt: null,
+            repos: new Set<string>(),
+          });
+        }
+        const entry = counts.get(login)!;
+        if (displayName && !entry.displayName) entry.displayName = displayName;
+        entry.commits += 1;
+        entry.additions += node?.additions ?? 0;
+        entry.deletions += node?.deletions ?? 0;
+        if (!entry.lastCommitAt || when > entry.lastCommitAt) entry.lastCommitAt = when;
+        entry.repos.add(repoSlug);
+      }
+
+      if (!history?.pageInfo?.hasNextPage) break;
+      cursor = history.pageInfo.endCursor;
+    }
+  }
+
+  const committers: CommitterStat[] = Array.from(counts.values()).map((c) => ({
+    user: c.user,
+    displayName: c.displayName,
+    commits: c.commits,
+    additions: c.additions,
+    deletions: c.deletions,
+    repos: Array.from(c.repos).sort(),
+    lastCommitAt: c.lastCommitAt,
+  }))
+  .sort((a, b) => b.commits - a.commits || (b.lastCommitAt ?? "").localeCompare(a.lastCommitAt ?? ""));
+
+  return { since, committers };
 }
 
 export async function ghOrgTeams(org: string): Promise<import("./types.js").OrgTeam[]> {

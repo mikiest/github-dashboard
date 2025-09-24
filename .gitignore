@@ -4,7 +4,9 @@ dist
 
 client/node_modules
 client/dist
+client/tsconfig.tsbuildinfo
 client/.env
 server/node_modules
 server/dist
+server/tsconfig.tsbuildinfo
 server/.env

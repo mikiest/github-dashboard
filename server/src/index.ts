@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { z } from "zod";
-import { ghRepos, ghPRsAcross, ghTopReviewers, ghOrgTeams } from "./gh.js";
+import { ghRepos, ghPRsAcross, ghTopReviewers, ghTopCommitters, ghOrgTeams } from "./gh.js";
 
 
 dotenv.config();
@@ -61,6 +61,27 @@ app.post("/api/reviewers/top", async (req, res) => {
     const data = await ghTopReviewers(body.org, body.repos, body.window);
     res.json(data);
   } catch (e:any) {
+    const msg = `${e?.stderr ?? ''} ${e?.message ?? ''}`;
+    if (/rate limit|abuse/i.test(msg) || e?.exitCode === 403) {
+      return res.status(429).json({ error: "GitHub rate limit", retryAfterMs: 60000 });
+    }
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+
+const TopCommittersBody = z.object({
+  org: z.string().min(1),
+  repos: z.array(z.string().min(1)).min(1),
+  window: z.enum(['24h','7d','30d'])
+});
+
+app.post("/api/committers/top", async (req, res) => {
+  try {
+    const body = TopCommittersBody.parse(req.body);
+    const data = await ghTopCommitters(body.org, body.repos, body.window);
+    res.json(data);
+  } catch (e: any) {
     const msg = `${e?.stderr ?? ''} ${e?.message ?? ''}`;
     if (/rate limit|abuse/i.test(msg) || e?.exitCode === 403) {
       return res.status(429).json({ error: "GitHub rate limit", retryAfterMs: 60000 });
