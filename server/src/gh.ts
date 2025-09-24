@@ -281,13 +281,13 @@ export async function ghTopReviewers(
       for (const pr of nodes) {
         const repoSlug = pr.repository?.nameWithOwner ?? `${org}`;
         const revNodes = pr.reviews?.nodes ?? [];
-        const seenReviewIds = new Set<string>();
+        const seenReviewIds = new Set<number | string>();
         for (const r of revNodes) {
-          const reviewKey = r.databaseId != null
-            ? `id:${r.databaseId}`
-            : `fallback:${r.author?.login ?? "unknown"}:${r.submittedAt ?? r.updatedAt ?? ""}`;
-          if (seenReviewIds.has(reviewKey)) continue;
-          seenReviewIds.add(reviewKey);
+          const reviewId = (r.databaseId ?? null) as number | null;
+          if (reviewId != null) {
+            if (seenReviewIds.has(reviewId)) continue;
+            seenReviewIds.add(reviewId);
+          }
           const when = r.submittedAt ?? r.updatedAt ?? null;
           if (!when || when < since) continue; // outside window
           const user = r.author?.login ?? "unknown";
@@ -313,8 +313,7 @@ export async function ghTopReviewers(
           else if (r.state === "COMMENTED" || r.state === "DISMISSED") {
             entry.commented++;
           }
-          const commentTotal = r.comments?.totalCount ?? 0;
-          entry.comments += commentTotal;
+          entry.comments += r.comments?.totalCount ?? 0;
 
           if (!entry.lastReviewAt || when > entry.lastReviewAt) entry.lastReviewAt = when;
           entry.repos.add(repoSlug);
