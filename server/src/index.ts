@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { z } from "zod";
-import { ghRepos, ghPRsAcross, ghTopReviewers } from "./gh.js";
+import { ghRepos, ghPRsAcross, ghTopReviewers, ghOrgTeams } from "./gh.js";
 
 
 dotenv.config();
@@ -60,6 +60,21 @@ app.post("/api/reviewers/top", async (req, res) => {
     const body = TopReviewersBody.parse(req.body);
     const data = await ghTopReviewers(body.org, body.repos, body.window);
     res.json(data);
+  } catch (e:any) {
+    const msg = `${e?.stderr ?? ''} ${e?.message ?? ''}`;
+    if (/rate limit|abuse/i.test(msg) || e?.exitCode === 403) {
+      return res.status(429).json({ error: "GitHub rate limit", retryAfterMs: 60000 });
+    }
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+
+app.get("/api/orgs/:org/teams", async (req, res) => {
+  try {
+    const org = z.string().min(1).parse(req.params.org);
+    const teams = await ghOrgTeams(org);
+    res.json({ teams });
   } catch (e:any) {
     const msg = `${e?.stderr ?? ''} ${e?.message ?? ''}`;
     if (/rate limit|abuse/i.test(msg) || e?.exitCode === 403) {

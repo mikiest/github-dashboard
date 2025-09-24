@@ -75,9 +75,10 @@ export default function ReviewersView({ org, favorites, windowSel, selectedUsers
               <tr className="text-left">
                 <th className="py-2">Reviewer</th>
                 <th className="py-2">Total</th>
-                <th className="py-2">Approved</th>
-                <th className="py-2">Changes</th>
-                <th className="py-2">Comments</th>
+                <th className="py-2">✅</th>
+                <th className="py-2">❌</th>
+                <th className="py-2">📝</th>
+                <th className="py-2">%</th>
                 <th className="py-2">Last review</th>
               </tr>
             </thead>
@@ -102,7 +103,8 @@ export default function ReviewersView({ org, favorites, windowSel, selectedUsers
                   <td className="py-2">{r.total}</td>
                   <td className="py-2">{r.approvals}</td>
                   <td className="py-2">{r.changesRequested}</td>
-                  <td className="py-2">{r.comments}</td>
+                  <td className="py-2">{r.commented}</td>
+                  <td className="py-2">{(r.approvals/r.total*100).toFixed(0)}</td>
                   <td className="py-2">
                     {r.lastReviewAt ? (
                       <span className={ageClass(r.lastReviewAt)} title={short(r.lastReviewAt)}>

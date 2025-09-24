@@ -4,6 +4,8 @@ import PRList from './components/PRList'
 import ReviewersView from './components/ReviewersView'
 import ReviewersSidebar from './components/ReviewersSidebar'
 import { loadSettings, saveSettings } from './store'
+import { useQuery } from '@tanstack/react-query'
+import { fetchTeams } from './api'
 
 
 export default function App() {
@@ -14,6 +16,15 @@ export default function App() {
   const [tab, setTab] = useState<'prs'|'reviewers'>('prs')
   const [reviewWindow, setReviewWindow] = useState<'24h'|'7d'|'30d'>('24h')
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
+  const [selectedTeams, setSelectedTeams] = useState<string[]>([])
+
+  const { data: teamsData } = useQuery({
+    queryKey: ['org-teams', org],
+    queryFn: () => fetchTeams(org),
+    enabled: !!org,
+    refetchOnWindowFocus: false,
+  })
+  const teams = teamsData ?? []
 
   useEffect(() => {
     saveSettings({ org, username, favorites, refreshMs })
@@ -23,7 +34,19 @@ export default function App() {
     setFavorites(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name])
   }
 
-  const canShowPRs = org && favorites.length > 0
+  const canShowPRs = org && favorites.length > 0;
+
+  const selectedUsersEffective = useMemo(() => {
+    if (!selectedTeams.length) return selectedUsers
+    const teamMembers = new Set<string>()
+    for (const t of teams) {
+      if (selectedTeams.includes(t.slug)) {
+        for (const m of t.members) teamMembers.add(m.login)
+      }
+    }
+    const set = new Set([...selectedUsers, ...Array.from(teamMembers)])
+    return Array.from(set)
+  }, [selectedUsers, selectedTeams, teams])
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-8">
@@ -77,8 +100,10 @@ export default function App() {
               org={org}
               favorites={favorites}
               windowSel={reviewWindow}
-              selectedUsers={selectedUsers}
-              onChangeSelected={setSelectedUsers}
+              selectedUsers={selectedUsersEffective}
+              onChangeUsers={setSelectedUsers}
+              onChangeTeams={setSelectedTeams}
+              selectedTeams={selectedTeams}
             />
           ) : (
             <RepoPicker org={org} favorites={favorites} onToggleFavorite={toggleFav} />
@@ -92,7 +117,7 @@ export default function App() {
               : <div className="text-sm text-zinc-400">Select at least one favorite repository to see PRs.</div>
           ) : (
             org
-              ? <ReviewersView org={org} favorites={favorites} selectedUsers={selectedUsers} windowSel={reviewWindow} onChangeSelected={setReviewWindow}/>
+              ? <ReviewersView org={org} favorites={favorites} selectedUsers={selectedUsersEffective} windowSel={reviewWindow} onChangeSelected={setReviewWindow}/>
               : <div className="text-sm text-zinc-400">Enter an organization to see reviewers.</div>
           )}
         </div>

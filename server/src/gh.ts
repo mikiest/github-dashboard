@@ -221,7 +221,7 @@ export async function ghTopReviewers(
   };
 
   const counts = new Map<string, {
-    user: string; approvals: number; displayName: string; changesRequested: number; comments: number; lastReviewAt: string|null; repos: Set<string>;
+    user: string; approvals: number; displayName: string; changesRequested: number; comments: number; commented: number; lastReviewAt: string|null; repos: Set<string>;
   }>();
 
   // GraphQL query with variables for search/pagination
@@ -246,6 +246,9 @@ export async function ghTopReviewers(
                 }
                 submittedAt
                 updatedAt
+                comments {
+                  totalCount
+                }
               }
             }
           }
@@ -279,6 +282,7 @@ export async function ghTopReviewers(
               user,
               approvals: 0,
               changesRequested: 0,
+              commented: 0,
               comments: 0,
               lastReviewAt: null,
               repos: new Set<string>(),
@@ -290,7 +294,10 @@ export async function ghTopReviewers(
 
           if (r.state === "APPROVED") entry.approvals++;
           else if (r.state === "CHANGES_REQUESTED") entry.changesRequested++;
-          else entry.comments++; // COMMENTED or DISMISSED count under comments bucket
+          else if (r.state === "COMMENTED") {
+            entry.commented++;
+          }
+          entry.comments += ((r as any).comments?.totalCount ?? 0); 
 
           if (!entry.lastReviewAt || when > entry.lastReviewAt) entry.lastReviewAt = when;
           entry.repos.add(repoSlug);
@@ -305,14 +312,73 @@ export async function ghTopReviewers(
   const reviewers: ReviewerStat[] = Array.from(counts.values()).map(e => ({
     user: e.user,
     displayName: e.displayName ?? null,
-    total: e.approvals + e.changesRequested + e.comments,
+    total: e.approvals + e.changesRequested + e.commented,
     approvals: e.approvals,
     changesRequested: e.changesRequested,
     comments: e.comments,
+    commented: e.commented,
     lastReviewAt: e.lastReviewAt,
     repos: Array.from(e.repos).sort(),
   }))
   .sort((a,b) => b.total - a.total || (b.lastReviewAt??'').localeCompare(a.lastReviewAt??''));
 
   return { since, reviewers };
+}
+
+export async function ghOrgTeams(org: string): Promise<import("./types.js").OrgTeam[]> {
+  const TEAMS_PER_PAGE = Number(process.env.TEAMS_PER_PAGE ?? 50);
+  const MEMBERS_PER_PAGE = Number(process.env.TEAM_MEMBERS_PER_PAGE ?? 100);
+
+  const out: import("./types.js").OrgTeam[] = [];
+  let teamCursor: string | null = null;
+
+  const TEAMS_Q = `
+    query($org:String!, $teamCursor:String) {
+      organization(login:$org) {
+        teams(first:${TEAMS_PER_PAGE}, after:$teamCursor, privacy:VISIBLE) {
+          pageInfo { hasNextPage endCursor }
+          nodes { slug name id }
+        }
+      }
+    }
+  `;
+
+  const MEMBERS_Q = `
+    query($org:String!, $slug:String!, $memberCursor:String) {
+      organization(login:$org) {
+        team(slug:$slug) {
+          name
+          members(first:${MEMBERS_PER_PAGE}, after:$memberCursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes { login ... on User { name } }
+          }
+        }
+      }
+    }
+  `;
+
+  // page through teams
+  do {
+    const d = await runGraphQL(TEAMS_Q, { org, teamCursor });
+    const teams = d?.organization?.teams?.nodes ?? [];
+    for (const t of teams) {
+      // page through members
+      const members: { login: string; name?: string|null }[] = [];
+      let memberCursor: string | null = null;
+      do {
+        const md = await runGraphQL(MEMBERS_Q, { org, slug: t.slug, memberCursor });
+        const nodes = md?.organization?.team?.members?.nodes ?? [];
+        for (const m of nodes) members.push({ login: m.login, name: m.name ?? null });
+        const pi = md?.organization?.team?.members?.pageInfo;
+        memberCursor = pi?.hasNextPage ? pi?.endCursor : null;
+      } while (memberCursor);
+
+      out.push({ slug: t.slug, name: t.name, members });
+    }
+
+    const pi = d?.organization?.teams?.pageInfo;
+    teamCursor = pi?.hasNextPage ? pi?.endCursor : null;
+  } while (teamCursor);
+
+  return out;
 }

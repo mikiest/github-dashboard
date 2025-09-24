@@ -37,7 +37,10 @@ export type ReviewerStat = {
   approvals: number
   changesRequested: number
   comments: number
+  commented: number
   lastReviewAt?: string | null
   repos: string[]
 }
 
+export type TeamMember = { login: string; name?: string | null }
+export type OrgTeam = { slug: string; name: string; members: TeamMember[] }

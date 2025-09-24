@@ -44,3 +44,5 @@ export interface ReviewerStat {
   lastReviewAt?: string | null;
   repos: string[]; // distinct repos they reviewed in (nameWithOwner or full slug)
 }
+export interface TeamMember { login: string; name?: string | null }
+export interface OrgTeam { slug: string; name: string; members: TeamMember[] }

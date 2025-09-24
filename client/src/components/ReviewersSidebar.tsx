@@ -1,87 +1,125 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchTopReviewers } from '../api'
-import type { ReviewerStat } from '../types'
+import { fetchTopReviewers, fetchTeams } from '../api'
+import type { ReviewerStat, OrgTeam } from '../types'
 
 type Props = {
   org: string
-  favorites: string[]
+  favorites: string[]                   // used to scope reviewers query
   windowSel: '24h'|'7d'|'30d'
-  selectedUsers: string[]
-  onChangeSelected: (users: string[]) => void
+  selectedUsers: string[]               // controlled from parent
+  selectedTeams: string[]               // team slugs
+  onChangeUsers: (users: string[]) => void
+  onChangeTeams: (teams: string[]) => void
 }
 
-export default function ReviewersSidebar({ org, favorites, windowSel, selectedUsers, onChangeSelected }: Props) {
-  const { data, isFetching } = useQuery({
+export default function ReviewersSidebar({
+  org, favorites, windowSel,
+  selectedUsers, selectedTeams,
+  onChangeUsers, onChangeTeams
+}: Props) {
+  // reviewers (to list users)
+  const { data: reviewersData } = useQuery({
     queryKey: ['top-reviewers', org, windowSel, ...[...favorites].sort()],
     queryFn: () => fetchTopReviewers(org, favorites, windowSel),
     enabled: !!org && favorites.length > 0,
     refetchOnWindowFocus: true,
-  })
-
+  });
+  const reviewers: ReviewerStat[] = reviewersData?.reviewers ?? []
   const allUsers = useMemo(() => {
     const uniq = new Map<string, string | null>()
-    for (const r of (data?.reviewers ?? []) as ReviewerStat[]) {
-      uniq.set(r.user, r.displayName ?? null)
-    }
-    return Array.from(uniq.entries())
-  }, [data])
+    for (const r of reviewers) uniq.set(r.user, r.displayName ?? null)
+    return Array.from(uniq.keys())
+      .map(login => ({ login, alias: login }))
+      .sort((a,b) => a.alias.localeCompare(b.alias))
+  }, [reviewers])
 
+  // teams list
+  const { data: teamsData, isFetching: teamsLoading } = useQuery({
+    queryKey: ['org-teams', org],
+    queryFn: () => fetchTeams(org),
+    enabled: !!org,
+    refetchOnWindowFocus: false,
+  });
+  const teams: OrgTeam[] = teamsData ?? []
+
+  // tabs + search
+  const [tab, setTab] = useState<'users'|'teams'>('users')
   const [q, setQ] = useState('')
   const ql = q.trim().toLowerCase()
-  const filtered = useMemo(() => {
+
+  const filteredUsers = useMemo(() => {
     if (!ql) return allUsers
-    return allUsers.filter(([login, name]) =>
-      login.toLowerCase().includes(ql) || (name ?? '').toLowerCase().includes(ql)
-    )
+    return allUsers.filter(u => u.alias.toLowerCase().includes(ql) || u.login.toLowerCase().includes(ql))
   }, [allUsers, ql])
 
-  const toggle = (login: string) => {
-    onChangeSelected(
-      selectedUsers.includes(login)
-        ? selectedUsers.filter(x => x !== login)
-        : [...selectedUsers, login]
+  const filteredTeams = useMemo(() => {
+    if (!ql) return teams
+    return teams.filter(t =>
+      t.name.toLowerCase().includes(ql) ||
+      t.slug.toLowerCase().includes(ql)
     )
-  }
+  }, [teams, ql])
 
-  const clear = () => onChangeSelected([])
+  // helpers
+  const toggleUser = (login: string) =>
+    onChangeUsers(selectedUsers.includes(login) ? selectedUsers.filter(x => x !== login) : [...selectedUsers, login])
+
+  const toggleTeam = (slug: string) =>
+    onChangeTeams(selectedTeams.includes(slug) ? selectedTeams.filter(x => x !== slug) : [...selectedTeams, slug])
+
+  const clear = () => (tab === 'users' ? onChangeUsers([]) : onChangeTeams([]))
 
   return (
     <div className="space-y-3">
+      <div className="inline-flex rounded-full border border-zinc-700 overflow-hidden">
+        <button onClick={() => setTab('users')} className={`px-3 py-1 text-xs ${tab==='users' ? 'bg-brand-500/20' : ''}`}>Users</button>
+        <button onClick={() => setTab('teams')} className={`px-3 py-1 text-xs ${tab==='teams' ? 'bg-brand-500/20' : ''}`}>Teams</button>
+      </div>
+
       <div>
-        <label className="text-xs uppercase tracking-wider text-zinc-400">Filter reviewers</label>
         <input
           value={q}
           onChange={e => setQ(e.target.value)}
-          placeholder="Search users…"
-          className="mt-1 w-full rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
+          placeholder={tab==='users' ? "Search users…" : "Search teams…"}
+          className="w-full rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
       </div>
 
       <div className="flex items-center gap-2 text-xs">
         <button onClick={clear} className="px-2 py-1 rounded-full border border-zinc-700 hover:bg-zinc-800">Clear</button>
-        {isFetching && <span className="ml-auto text-zinc-400">Loading…</span>}
+        {tab==='teams' && teamsLoading && <span className="text-zinc-400">Loading teams…</span>}
       </div>
 
       <div className="max-h-80 overflow-auto pr-2">
-        {filtered.map(([login, name]) => {
-          const on = selectedUsers.includes(login)
-          return (
-            <label key={login} className="flex items-center justify-between py-2 border-b border-zinc-800">
-              <div className="min-w-0">
-                <div className="truncate font-medium">{login}</div>
-                {name && <div className="text-xs text-zinc-400 truncate">{name}</div>}
-              </div>
-              <input
-                type="checkbox"
-                checked={on}
-                onChange={() => toggle(login)}
-                className="accent-brand-500"
-              />
-            </label>
-          )
-        })}
-        {filtered.length === 0 && <div className="text-sm text-zinc-400 py-4">No users.</div>}
+        {tab === 'users' ? (
+          filteredUsers.map(({ login, alias }) => {
+            const on = selectedUsers.includes(login)
+            return (
+              <label key={login} className="flex items-center justify-between py-2 border-b border-zinc-800">
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{alias}</div>
+                </div>
+                <input type="checkbox" checked={on} onChange={() => toggleUser(login)} className="accent-brand-500" />
+              </label>
+            )
+          })
+        ) : (
+          filteredTeams.map((t) => {
+            const on = selectedTeams.includes(t.slug)
+            return (
+              <label key={t.slug} className="flex items-center justify-between py-2 border-b border-zinc-800">
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{t.name}</div>
+                  <div className="text-xs text-zinc-400 truncate">@{t.slug} • {t.members.length} members</div>
+                </div>
+                <input type="checkbox" checked={on} onChange={() => toggleTeam(t.slug)} className="accent-brand-500" />
+              </label>
+            )
+          })
+        )}
+        {tab==='users' && filteredUsers.length===0 && <div className="py-4 text-sm text-zinc-400">No users.</div>}
+        {tab==='teams' && filteredTeams.length===0 && <div className="py-4 text-sm text-zinc-400">No teams.</div>}
       </div>
     </div>
   )

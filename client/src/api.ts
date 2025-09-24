@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Repo, PREnriched, ReviewerStat } from './types'
+import type { Repo, PREnriched, ReviewerStat, OrgTeam } from './types'
 
 export async function fetchRepos(org: string): Promise<Repo[]> {
   const { data } = await axios.get<{ repos: Repo[] }>(`/api/orgs/${encodeURIComponent(org)}/repos`)
@@ -18,4 +18,9 @@ export async function fetchTopReviewers(
 ): Promise<{ since: string; reviewers: ReviewerStat[] }> {
   const { data } = await axios.post(`/api/reviewers/top`, { org, repos, window })
   return data
+}
+
+export async function fetchTeams(org: string): Promise<OrgTeam[]> {
+  const { data } = await axios.get<{ teams: OrgTeam[] }>(`/api/orgs/${encodeURIComponent(org)}/teams`)
+  return data.teams
 }
