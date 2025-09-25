@@ -14,9 +14,21 @@ export async function fetchPRs(org: string, repos: string[], states: ('open'|'me
 export async function fetchTopReviewers(
   org: string,
   repos: string[],
-  window: '24h' | '7d' | '30d'
+  window: '24h' | '7d' | '30d',
+  users?: string[]
 ): Promise<{ since: string; reviewers: ReviewerStat[] }> {
-  const { data } = await axios.post(`/api/reviewers/top`, { org, repos, window })
+  const payload: {
+    org: string
+    repos: string[]
+    window: '24h' | '7d' | '30d'
+    users?: string[]
+  } = { org, repos, window }
+
+  if (users?.length) {
+    payload.users = users
+  }
+
+  const { data } = await axios.post(`/api/reviewers/top`, payload)
   return data
 }
 
