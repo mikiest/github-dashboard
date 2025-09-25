@@ -98,7 +98,6 @@ export default function App() {
           {tab === 'reviewers' ? (
             <ReviewersSidebar
               org={org}
-              favorites={favorites}
               windowSel={reviewWindow}
               selectedUsers={selectedUsersEffective}
               onChangeUsers={setSelectedUsers}
@@ -117,7 +116,7 @@ export default function App() {
               : <div className="text-sm text-zinc-400">Select at least one favorite repository to see PRs.</div>
           ) : (
             org
-              ? <ReviewersView org={org} favorites={favorites} selectedUsers={selectedUsersEffective} windowSel={reviewWindow} onChangeSelected={setReviewWindow}/>
+              ? <ReviewersView org={org} selectedUsers={selectedUsersEffective} windowSel={reviewWindow} onChangeSelected={setReviewWindow}/>
               : <div className="text-sm text-zinc-400">Enter an organization to see reviewers.</div>
           )}
         </div>
