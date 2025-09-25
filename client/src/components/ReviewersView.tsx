@@ -67,6 +67,8 @@ export default function ReviewersView({ org, favorites, windowSel, selectedUsers
         </button>
       </div>
 
+      <p className="text-xs text-zinc-500">Figures are estimates because of limited GitHub data.</p>
+
       <div className="card p-4 overflow-x-auto">
         {isError ? (
           <div className="text-red-300">Error: {(error as Error).message}</div>

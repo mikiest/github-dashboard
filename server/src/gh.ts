@@ -220,25 +220,31 @@ export async function ghTopReviewers(
     ).values()
   );
   const userFilterSet = sanitizedUsers.length ? new Set(sanitizedUsers.map(u => u.toLowerCase())) : null;
+  const shouldFilterByUser = !!userFilterSet && sanitizedUsers.length > 0;
 
   // Build batches of repos to avoid query-length limits
   const repoBatches = batch(repos, REPO_BATCH);
+
+  type NodeReview = {
+    databaseId?: number | null;
+    state: string;
+    author?: { login?: string };
+    submittedAt?: string;
+    updatedAt?: string;
+    comments?: { totalCount?: number };
+  };
 
   type NodePR = {
     number: number;
     url: string;
     repository: { nameWithOwner: string };
     reviews: {
-      nodes: Array<{
-        databaseId?: number | null;
-        state: string;
-        author?: { login?: string };
-        submittedAt?: string;
-        updatedAt?: string;
-        comments?: { totalCount?: number };
-      }>;
+      nodes: Array<NodeReview>;
+      pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
     };
   };
+
+  const REVIEW_PAGE_LIMIT = Number(process.env.REVIEW_PAGE_LIMIT ?? 5);
 
   const counts = new Map<string, {
     user: string; approvals: number; displayName: string; changesRequested: number; comments: number; commented: number; lastReviewAt: string|null; repos: Set<string>;
@@ -278,6 +284,31 @@ export async function ghTopReviewers(
     }
   `;
 
+  const REVIEWS_QUERY = `
+    query($owner:String!, $name:String!, $number:Int!, $cursor:String, $author:String) {
+      repository(owner:$owner, name:$name) {
+        pullRequest(number:$number) {
+          reviews(first: 100, after:$cursor${shouldFilterByUser ? ", author:$author" : ""}) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              databaseId
+              state
+              author {
+                login
+                ... on User { name }
+              }
+              submittedAt
+              updatedAt
+              comments {
+                totalCount
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
   for (const batchRepos of repoBatches) {
     // search string: org + date + repos
     const repoQuals = batchRepos.map(r => `repo:${org}/${r}`);
@@ -299,10 +330,65 @@ export async function ghTopReviewers(
 
       for (const pr of nodes) {
         const repoSlug = pr.repository?.nameWithOwner ?? `${org}`;
-        const revNodes = pr.reviews?.nodes ?? [];
+
+        const reviewNodes: NodeReview[] = [];
+        if (!shouldFilterByUser) {
+          reviewNodes.push(...((pr.reviews?.nodes ?? []) as NodeReview[]));
+
+          let reviewPageInfo = pr.reviews?.pageInfo ?? null;
+          let reviewCursor = reviewPageInfo?.endCursor ?? null;
+          let pagesFetched = 1;
+
+          const [ownerPart, repoPart] = repoSlug.split("/");
+          while (
+            ownerPart &&
+            repoPart &&
+            reviewPageInfo?.hasNextPage &&
+            pagesFetched < REVIEW_PAGE_LIMIT
+          ) {
+            const more = await runGraphQL(REVIEWS_QUERY, {
+              owner: ownerPart,
+              name: repoPart,
+              number: String(pr.number),
+              cursor: reviewCursor ?? "",
+            });
+            const connection = more?.repository?.pullRequest?.reviews;
+            if (!connection) break;
+            const nextNodes = (connection.nodes ?? []) as NodeReview[];
+            reviewNodes.push(...nextNodes);
+            reviewPageInfo = connection.pageInfo ?? null;
+            reviewCursor = reviewPageInfo?.endCursor ?? null;
+            pagesFetched++;
+          }
+        } else {
+          const [ownerPart, repoPart] = repoSlug.split("/");
+          if (ownerPart && repoPart) {
+            for (const login of sanitizedUsers) {
+              let userCursor: string | null = null;
+              let pagesFetched = 0;
+              do {
+                const more = await runGraphQL(REVIEWS_QUERY, {
+                  owner: ownerPart,
+                  name: repoPart,
+                  number: String(pr.number),
+                  cursor: userCursor ?? "",
+                  author: login,
+                });
+                const connection = more?.repository?.pullRequest?.reviews;
+                if (!connection) break;
+                const nextNodes = (connection.nodes ?? []) as NodeReview[];
+                reviewNodes.push(...nextNodes);
+                const pageInfo = connection.pageInfo ?? null;
+                userCursor = pageInfo?.hasNextPage ? pageInfo.endCursor ?? null : null;
+                pagesFetched++;
+              } while (userCursor && pagesFetched < REVIEW_PAGE_LIMIT);
+            }
+          }
+        }
+
         const seenReviewIds = new Set<number | string>();
         const lastCommentReviewAtByUser = new Map<string, number>();
-        for (const r of revNodes) {
+        for (const r of reviewNodes) {
           const reviewId = (r.databaseId ?? null) as number | null;
           if (reviewId != null) {
             if (seenReviewIds.has(reviewId)) continue;
