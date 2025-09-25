@@ -13,9 +13,12 @@ type Props = {
 }
 
 export default function ReviewersView({ org, favorites, windowSel, selectedUsers, onChangeSelected }: Props) {
+  const sortedFavorites = useMemo(() => [...favorites].sort((a, b) => a.localeCompare(b)), [favorites])
+  const sortedUsers = useMemo(() => [...selectedUsers].sort((a, b) => a.localeCompare(b)), [selectedUsers])
+
   const { data, isFetching, refetch, isError, error } = useQuery({
-    queryKey: ['top-reviewers', org, windowSel, ...[...favorites].sort()],
-    queryFn: () => fetchTopReviewers(org, favorites, windowSel),
+    queryKey: ['top-reviewers', org, windowSel, ...sortedFavorites, 'users', ...sortedUsers],
+    queryFn: () => fetchTopReviewers(org, favorites, windowSel, sortedUsers),
     enabled: !!org && favorites.length > 0,
     refetchOnWindowFocus: true,
   })

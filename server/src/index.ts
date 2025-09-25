@@ -51,14 +51,15 @@ app.post("/api/prs", async (req, res) => {
 const TopReviewersBody = z.object({
   org: z.string().min(1),
   repos: z.array(z.string().min(1)).min(1),
-  window: z.enum(['24h','7d','30d'])
+  window: z.enum(['24h','7d','30d']),
+  users: z.array(z.string().min(1)).optional(),
 });
 
 
 app.post("/api/reviewers/top", async (req, res) => {
   try {
     const body = TopReviewersBody.parse(req.body);
-    const data = await ghTopReviewers(body.org, body.repos, body.window);
+    const data = await ghTopReviewers(body.org, body.repos, body.window, body.users);
     res.json(data);
   } catch (e:any) {
     const msg = `${e?.stderr ?? ''} ${e?.message ?? ''}`;

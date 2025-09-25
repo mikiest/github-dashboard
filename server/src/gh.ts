@@ -204,11 +204,22 @@ async function runGraphQL(query: string, vars: Record<string,string|null|undefin
 export async function ghTopReviewers(
   org: string,
   repos: string[],
-  window: "24h" | "7d" | "30d"
+  window: "24h" | "7d" | "30d",
+  users?: string[] | null
 ): Promise<{ since: string; reviewers: ReviewerStat[] }> {
   const since = buildSinceISO(window);
   const REPO_BATCH = Number(process.env.REPO_BATCH ?? 6); // keep search queries short
   const SEARCH_PAGE_LIMIT = Number(process.env.SEARCH_PAGE_LIMIT ?? 5); // up to 500 PRs/batch
+
+  const sanitizedUsers = Array.from(
+    new Map(
+      (users ?? [])
+        .map(u => u?.trim())
+        .filter((u): u is string => !!u)
+        .map(u => [u.toLowerCase(), u] as const)
+    ).values()
+  );
+  const userFilterSet = sanitizedUsers.length ? new Set(sanitizedUsers.map(u => u.toLowerCase())) : null;
 
   // Build batches of repos to avoid query-length limits
   const repoBatches = batch(repos, REPO_BATCH);
@@ -269,8 +280,16 @@ export async function ghTopReviewers(
 
   for (const batchRepos of repoBatches) {
     // search string: org + date + repos
-    const repoQuals = batchRepos.map(r => `repo:${org}/${r}`).join(" ");
-    const qBase = `org:${org} is:pr updated:>=${since} ${repoQuals}`.trim();
+    const repoQuals = batchRepos.map(r => `repo:${org}/${r}`);
+    const userQuals = sanitizedUsers.map(u => `involves:${u}`);
+    const qParts = [
+      `org:${org}`,
+      "is:pr",
+      `updated:>=${since}`,
+      ...repoQuals,
+      ...userQuals,
+    ];
+    const qBase = qParts.join(" ").trim();
 
     let cursor: string | null = null;
     for (let page = 0; page < SEARCH_PAGE_LIMIT; page++) {
@@ -291,6 +310,7 @@ export async function ghTopReviewers(
           const when = r.submittedAt ?? r.updatedAt ?? null;
           if (!when || when < since) continue; // outside window
           const user = r.author?.login ?? "unknown";
+          if (userFilterSet && !userFilterSet.has(user.toLowerCase())) continue;
           const name = (r.author as any)?.name ?? null;
 
           if (!counts.has(user)) {
