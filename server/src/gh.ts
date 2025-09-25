@@ -201,6 +201,32 @@ async function runGraphQL(query: string, vars: Record<string,string|null|undefin
   return json.data ?? json;
 }
 
+const orgIdCache = new Map<string, string>();
+
+async function getOrgId(org: string): Promise<string> {
+  if (orgIdCache.has(org)) {
+    return orgIdCache.get(org)!;
+  }
+
+  const query = `
+    query($org:String!) {
+      organization(login:$org) {
+        id
+      }
+    }
+  `;
+
+  const data = await runGraphQL(query, { org });
+  const id = data?.organization?.id;
+
+  if (!id) {
+    throw new Error(`Unable to resolve organization id for ${org}`);
+  }
+
+  orgIdCache.set(org, id);
+  return id;
+}
+
 export async function ghTopReviewers(
   org: string,
   window: "24h" | "7d" | "30d",
@@ -220,6 +246,8 @@ export async function ghTopReviewers(
     return { since, reviewers: [] };
   }
 
+  const orgId = await getOrgId(org);
+
   const usersPerQuery = Math.max(1, Number(process.env.REVIEWER_USER_BATCH ?? 8) || 0);
 
   const buildReviewerQuery = (logins: string[]) => {
@@ -229,7 +257,7 @@ export async function ghTopReviewers(
 u${index}: user(login:"${esc(login)}") {
   login
   name
-  contributionsCollection(from:"${esc(since)}", organizationID:"${esc(org)}") {
+  contributionsCollection(from:"${esc(since)}", organizationID:"${esc(orgId)}") {
     pullRequestReviewContributions(first:100) {
       nodes {
         occurredAt
