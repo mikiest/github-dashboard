@@ -96,7 +96,7 @@ SEARCH_PAGE_LIMIT=5      # pages (100 each) per GraphQL search batch (reviewers 
 
 ```bash
 gh auth status
-gh auth login
+gh auth login -s=user -s=read:user
 ```
 
 ---
