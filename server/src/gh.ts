@@ -203,7 +203,6 @@ async function runGraphQL(query: string, vars: Record<string,string|null|undefin
 
 export async function ghTopReviewers(
   org: string,
-  repos: string[],
   window: "24h" | "7d" | "30d",
   users?: string[] | null
 ): Promise<{ since: string; reviewers: ReviewerStat[] }> {
@@ -221,8 +220,6 @@ export async function ghTopReviewers(
     return { since, reviewers: [] };
   }
 
-  const repoSet = new Set(repos.map(r => `${org}/${r}`.toLowerCase()));
-
   const usersPerQuery = Math.max(1, Number(process.env.REVIEWER_USER_BATCH ?? 8) || 0);
 
   const buildReviewerQuery = (logins: string[]) => {
@@ -232,7 +229,7 @@ export async function ghTopReviewers(
 u${index}: user(login:"${esc(login)}") {
   login
   name
-  contributionsCollection(from:"${esc(since)}") {
+  contributionsCollection(from:"${esc(since)}", organizationID:"${esc(org)}") {
     pullRequestReviewContributions(first:100) {
       nodes {
         occurredAt
@@ -312,7 +309,6 @@ u${index}: user(login:"${esc(login)}") {
       if (!review) continue;
       const repoSlug = review.pullRequest?.repository?.nameWithOwner ?? "";
       if (!repoSlug) continue;
-      if (repoSet.size && !repoSet.has(repoSlug.toLowerCase())) continue;
 
       const reviewId = review.databaseId ?? null;
       if (reviewId != null) {

@@ -13,16 +13,14 @@ export async function fetchPRs(org: string, repos: string[], states: ('open'|'me
 
 export async function fetchTopReviewers(
   org: string,
-  repos: string[],
   window: '24h' | '7d' | '30d',
   users?: string[]
 ): Promise<{ since: string; reviewers: ReviewerStat[] }> {
   const payload: {
     org: string
-    repos: string[]
     window: '24h' | '7d' | '30d'
     users?: string[]
-  } = { org, repos, window }
+  } = { org, window }
 
   if (users?.length) {
     payload.users = users

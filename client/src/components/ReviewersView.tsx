@@ -6,20 +6,18 @@ import { fromNow, short, ageClass } from '../lib_time'
 
 type Props = {
   org: string
-  favorites: string[]
   selectedUsers: string[]
   windowSel: '24h'|'7d'|'30d'
   onChangeSelected: (window: '24h'|'7d'|'30d') => void
 }
 
-export default function ReviewersView({ org, favorites, windowSel, selectedUsers, onChangeSelected }: Props) {
-  const sortedFavorites = useMemo(() => [...favorites].sort((a, b) => a.localeCompare(b)), [favorites])
+export default function ReviewersView({ org, windowSel, selectedUsers, onChangeSelected }: Props) {
   const sortedUsers = useMemo(() => [...selectedUsers].sort((a, b) => a.localeCompare(b)), [selectedUsers])
 
   const { data, isFetching, refetch, isError, error } = useQuery({
-    queryKey: ['top-reviewers', org, windowSel, ...sortedFavorites, 'users', ...sortedUsers],
-    queryFn: () => fetchTopReviewers(org, favorites, windowSel, sortedUsers),
-    enabled: !!org && favorites.length > 0,
+    queryKey: ['top-reviewers', org, windowSel, 'users', ...sortedUsers],
+    queryFn: () => fetchTopReviewers(org, windowSel, sortedUsers),
+    enabled: !!org,
     refetchOnWindowFocus: true,
   })
 

@@ -5,7 +5,6 @@ import type { ReviewerStat, OrgTeam } from '../types'
 
 type Props = {
   org: string
-  favorites: string[]                   // used to scope reviewers query
   windowSel: '24h'|'7d'|'30d'
   selectedUsers: string[]               // controlled from parent
   selectedTeams: string[]               // team slugs
@@ -14,15 +13,15 @@ type Props = {
 }
 
 export default function ReviewersSidebar({
-  org, favorites, windowSel,
+  org, windowSel,
   selectedUsers, selectedTeams,
   onChangeUsers, onChangeTeams
 }: Props) {
   // reviewers (to list users)
   const { data: reviewersData } = useQuery({
-    queryKey: ['top-reviewers', org, windowSel, ...[...favorites].sort()],
-    queryFn: () => fetchTopReviewers(org, favorites, windowSel),
-    enabled: !!org && favorites.length > 0,
+    queryKey: ['top-reviewers', org, windowSel],
+    queryFn: () => fetchTopReviewers(org, windowSel),
+    enabled: !!org,
     refetchOnWindowFocus: true,
   });
   const reviewers: ReviewerStat[] = reviewersData?.reviewers ?? []
