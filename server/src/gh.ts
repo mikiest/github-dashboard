@@ -257,8 +257,15 @@ export async function ghTopReviewers(
 u${index}: user(login:"${esc(login)}") {
   login
   name
+  ...ReviewerContribs
+}`;
+    });
+    query += "}\n";
+    query += `fragment ReviewerContribs on User {
   contributionsCollection(from:"${esc(since)}", organizationID:"${esc(orgId)}") {
+    totalCommitContributions
     pullRequestReviewContributions(first:100) {
+      totalCount
       nodes {
         occurredAt
         pullRequestReview {
@@ -281,8 +288,6 @@ u${index}: user(login:"${esc(login)}") {
     }
   }
 }`;
-    });
-    query += "}";
     return query;
   };
 
