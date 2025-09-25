@@ -301,6 +301,7 @@ export async function ghTopReviewers(
         const repoSlug = pr.repository?.nameWithOwner ?? `${org}`;
         const revNodes = pr.reviews?.nodes ?? [];
         const seenReviewIds = new Set<number | string>();
+        const lastCommentReviewAtByUser = new Map<string, number>();
         for (const r of revNodes) {
           const reviewId = (r.databaseId ?? null) as number | null;
           if (reviewId != null) {
@@ -309,6 +310,7 @@ export async function ghTopReviewers(
           }
           const when = r.submittedAt ?? r.updatedAt ?? null;
           if (!when || when < since) continue; // outside window
+          const whenMs = Date.parse(when);
           const user = r.author?.login ?? "unknown";
           if (userFilterSet && !userFilterSet.has(user.toLowerCase())) continue;
           const name = (r.author as any)?.name ?? null;
@@ -331,7 +333,18 @@ export async function ghTopReviewers(
           if (r.state === "APPROVED") entry.approvals++;
           else if (r.state === "CHANGES_REQUESTED") entry.changesRequested++;
           else if (r.state === "COMMENTED") {
-            entry.commented++;
+            const previous = Number.isNaN(whenMs)
+              ? null
+              : lastCommentReviewAtByUser.get(user) ?? null;
+            const withinWindow =
+              previous != null && Math.abs(whenMs - previous) <= 5 * 60 * 1000;
+            if (!withinWindow) {
+              entry.commented++;
+            }
+            if (!Number.isNaN(whenMs)) {
+              const latest = previous == null ? whenMs : Math.max(previous, whenMs);
+              lastCommentReviewAtByUser.set(user, latest);
+            }
           }
           entry.comments += r.comments?.totalCount ?? 0;
 
