@@ -208,9 +208,6 @@ export async function ghTopReviewers(
   users?: string[] | null
 ): Promise<{ since: string; reviewers: ReviewerStat[] }> {
   const since = buildSinceISO(window);
-  const REPO_BATCH = Number(process.env.REPO_BATCH ?? 6); // keep search queries short
-  const SEARCH_PAGE_LIMIT = Number(process.env.SEARCH_PAGE_LIMIT ?? 5); // up to 500 PRs/batch
-
   const sanitizedUsers = Array.from(
     new Map(
       (users ?? [])
@@ -219,157 +216,172 @@ export async function ghTopReviewers(
         .map(u => [u.toLowerCase(), u] as const)
     ).values()
   );
-  const userFilterSet = sanitizedUsers.length ? new Set(sanitizedUsers.map(u => u.toLowerCase())) : null;
 
-  // Build batches of repos to avoid query-length limits
-  const repoBatches = batch(repos, REPO_BATCH);
+  if (!sanitizedUsers.length) {
+    return { since, reviewers: [] };
+  }
 
-  type NodePR = {
-    number: number;
-    url: string;
-    repository: { nameWithOwner: string };
-    reviews: {
-      nodes: Array<{
-        databaseId?: number | null;
-        state: string;
-        author?: { login?: string };
-        submittedAt?: string;
-        updatedAt?: string;
-        comments?: { totalCount?: number };
-      }>;
-    };
-  };
+  const repoSet = new Set(repos.map(r => `${org}/${r}`.toLowerCase()));
 
-  const counts = new Map<string, {
-    user: string; approvals: number; displayName: string; changesRequested: number; comments: number; commented: number; lastReviewAt: string|null; repos: Set<string>;
-  }>();
+  const usersPerQuery = Math.max(1, Number(process.env.REVIEWER_USER_BATCH ?? 8) || 0);
 
-  // GraphQL query with variables for search/pagination
-  const QUERY = `
-    query($q:String!, $cursor:String) {
-      rateLimit { remaining resetAt cost }
-      search(query:$q, type: ISSUE, first: 100, after:$cursor) {
-        issueCount
-        pageInfo { hasNextPage endCursor }
-        nodes {
-          ... on PullRequest {
+  const buildReviewerQuery = (logins: string[]) => {
+    let query = "query { rateLimit { remaining resetAt cost }";
+    logins.forEach((login, index) => {
+      query += `
+u${index}: user(login:"${esc(login)}") {
+  login
+  name
+  contributionsCollection(from:"${esc(since)}") {
+    pullRequestReviewContributions(first:100) {
+      nodes {
+        occurredAt
+        pullRequestReview {
+          databaseId
+          state
+          submittedAt
+          updatedAt
+          author {
+            login
+            ... on User { name }
+          }
+          comments { totalCount }
+          pullRequest {
             number
             url
             repository { nameWithOwner }
-            reviews(first: 100) {
-              pageInfo { hasNextPage endCursor }
-              nodes {
-                databaseId
-                state
-                author {
-                  login
-                  ... on User { name }
-                }
-                submittedAt
-                updatedAt
-                comments {
-                  totalCount
-                }
-              }
-            }
           }
         }
       }
-    }
-  `;
-
-  for (const batchRepos of repoBatches) {
-    // search string: org + date + repos
-    const repoQuals = batchRepos.map(r => `repo:${org}/${r}`);
-    const userQuals = sanitizedUsers.map(u => `involves:${u}`);
-    const qParts = [
-      `org:${org}`,
-      "is:pr",
-      `updated:>=${since}`,
-      ...repoQuals,
-      ...userQuals,
-    ];
-    const qBase = qParts.join(" ").trim();
-
-    let cursor: string | null = null;
-    for (let page = 0; page < SEARCH_PAGE_LIMIT; page++) {
-      const data = await runGraphQL(QUERY, { q: qBase, cursor: cursor ?? "" });
-      const search = data.search;
-      const nodes = (search?.nodes ?? []) as NodePR[];
-
-      for (const pr of nodes) {
-        const repoSlug = pr.repository?.nameWithOwner ?? `${org}`;
-        const revNodes = pr.reviews?.nodes ?? [];
-        const seenReviewIds = new Set<number | string>();
-        const lastCommentReviewAtByUser = new Map<string, number>();
-        for (const r of revNodes) {
-          const reviewId = (r.databaseId ?? null) as number | null;
-          if (reviewId != null) {
-            if (seenReviewIds.has(reviewId)) continue;
-            seenReviewIds.add(reviewId);
-          }
-          const when = r.submittedAt ?? r.updatedAt ?? null;
-          if (!when || when < since) continue; // outside window
-          const whenMs = Date.parse(when);
-          const user = r.author?.login ?? "unknown";
-          if (userFilterSet && !userFilterSet.has(user.toLowerCase())) continue;
-          const name = (r.author as any)?.name ?? null;
-
-          if (!counts.has(user)) {
-            counts.set(user, {
-              user,
-              approvals: 0,
-              changesRequested: 0,
-              commented: 0,
-              comments: 0,
-              lastReviewAt: null,
-              repos: new Set<string>(),
-              displayName: name,
-            } as any);
-          }
-          const entry = counts.get(user)! as any;
-          if (name && !entry.displayName) entry.displayName = name;
-
-          if (r.state === "APPROVED") entry.approvals++;
-          else if (r.state === "CHANGES_REQUESTED") entry.changesRequested++;
-          else if (r.state === "COMMENTED") {
-            const previous = Number.isNaN(whenMs)
-              ? null
-              : lastCommentReviewAtByUser.get(user) ?? null;
-            const withinWindow =
-              previous != null && Math.abs(whenMs - previous) <= 5 * 60 * 1000;
-            if (!withinWindow) {
-              entry.commented++;
-            }
-            if (!Number.isNaN(whenMs)) {
-              const latest = previous == null ? whenMs : Math.max(previous, whenMs);
-              lastCommentReviewAtByUser.set(user, latest);
-            }
-          }
-          entry.comments += r.comments?.totalCount ?? 0;
-
-          if (!entry.lastReviewAt || when > entry.lastReviewAt) entry.lastReviewAt = when;
-          entry.repos.add(repoSlug);
-        }
-      }
-
-      if (!search?.pageInfo?.hasNextPage) break;
-      cursor = search.pageInfo.endCursor;
     }
   }
+}`;
+    });
+    query += "}";
+    return query;
+  };
 
-  const reviewers: ReviewerStat[] = Array.from(counts.values()).map(e => ({
-    user: e.user,
-    displayName: e.displayName ?? null,
-    total: e.approvals + e.changesRequested + e.commented,
-    approvals: e.approvals,
-    changesRequested: e.changesRequested,
-    comments: e.comments,
-    commented: e.commented,
-    lastReviewAt: e.lastReviewAt,
-    repos: Array.from(e.repos).sort(),
-  }))
-  .sort((a,b) => b.total - a.total || (b.lastReviewAt??'').localeCompare(a.lastReviewAt??''));
+  const summarizeUser = (
+    userNode: any,
+    userLogin: string
+  ) => {
+    const seenReviewIds = new Set<number | string>();
+    const lastCommentReviewAtByPR = new Map<string, number>();
+    const entry = {
+      user: userLogin,
+      approvals: 0,
+      changesRequested: 0,
+      commented: 0,
+      comments: 0,
+      lastReviewAt: null as string | null,
+      repos: new Set<string>(),
+      displayName: null as string | null,
+    };
+
+    if (!userNode) {
+      return entry;
+    }
+
+    if (!entry.displayName && userNode?.name) {
+      entry.displayName = userNode.name;
+    }
+
+    type ReviewContribution = {
+      occurredAt?: string | null;
+      pullRequestReview?: {
+        databaseId?: number | null;
+        state?: string | null;
+        submittedAt?: string | null;
+        updatedAt?: string | null;
+        author?: { login?: string | null; name?: string | null } | null;
+        comments?: { totalCount?: number | null } | null;
+        pullRequest?: {
+          number?: number | null;
+          url?: string | null;
+          repository?: { nameWithOwner?: string | null } | null;
+        } | null;
+      } | null;
+    };
+
+    const contribNodes = (
+      userNode?.contributionsCollection?.pullRequestReviewContributions?.nodes ?? []
+    ) as ReviewContribution[];
+
+    for (const node of contribNodes) {
+      const review = node.pullRequestReview;
+      if (!review) continue;
+      const repoSlug = review.pullRequest?.repository?.nameWithOwner ?? "";
+      if (!repoSlug) continue;
+      if (repoSet.size && !repoSet.has(repoSlug.toLowerCase())) continue;
+
+      const reviewId = review.databaseId ?? null;
+      if (reviewId != null) {
+        if (seenReviewIds.has(reviewId)) continue;
+        seenReviewIds.add(reviewId);
+      }
+
+      const when =
+        review.submittedAt ??
+        review.updatedAt ??
+        node.occurredAt ??
+        null;
+      if (!when || when < since) continue;
+
+      const whenMs = Date.parse(when);
+      const reviewState = review.state ?? "";
+
+      if (reviewState === "APPROVED") entry.approvals++;
+      else if (reviewState === "CHANGES_REQUESTED") entry.changesRequested++;
+      else if (reviewState === "COMMENTED") {
+        const key = `${review.pullRequest?.url ?? repoSlug}`;
+        const prev = Number.isNaN(whenMs) ? null : lastCommentReviewAtByPR.get(key) ?? null;
+        const withinWindow = prev != null && Math.abs(whenMs - prev) <= 5 * 60 * 1000;
+        if (!withinWindow) {
+          entry.commented++;
+        }
+        if (!Number.isNaN(whenMs)) {
+          const latest = prev == null ? whenMs : Math.max(prev, whenMs);
+          lastCommentReviewAtByPR.set(key, latest);
+        }
+      }
+
+      entry.comments += review.comments?.totalCount ?? 0;
+
+      if (!entry.lastReviewAt || when > entry.lastReviewAt) entry.lastReviewAt = when;
+      entry.repos.add(repoSlug);
+
+      if (!entry.displayName && review.author?.name) {
+        entry.displayName = review.author.name;
+      }
+    }
+
+    return entry;
+  };
+
+  const counts = [] as ReturnType<typeof summarizeUser>[];
+
+  for (const chunk of batch(sanitizedUsers, usersPerQuery)) {
+    const data = await runGraphQL(buildReviewerQuery(chunk));
+    chunk.forEach((userLogin, index) => {
+      const alias = `u${index}`;
+      const userNode = data?.[alias];
+      counts.push(summarizeUser(userNode, userLogin));
+    });
+  }
+
+  const reviewers: ReviewerStat[] = counts
+    .map(entry => ({
+      user: entry.user,
+      displayName: entry.displayName,
+      total: entry.approvals + entry.changesRequested + entry.commented,
+      approvals: entry.approvals,
+      changesRequested: entry.changesRequested,
+      comments: entry.comments,
+      commented: entry.commented,
+      lastReviewAt: entry.lastReviewAt,
+      repos: Array.from(entry.repos).sort(),
+    }))
+    .sort((a, b) => b.total - a.total || (b.lastReviewAt ?? "").localeCompare(a.lastReviewAt ?? ""));
 
   return { since, reviewers };
 }
