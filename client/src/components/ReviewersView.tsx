@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchTopReviewers } from '../api'
 import type { ReviewerStat } from '../types'
 import { fromNow, short, ageClass } from '../lib_time'
+import { ReviewBar } from './ReviewBar'
 
 type Props = {
   org: string
@@ -76,23 +77,23 @@ export default function ReviewersView({ org, windowSel, selectedUsers, onChangeS
               <tr className="text-left">
                 <th className="py-2">Reviewer</th>
                 <th className="py-2">Total</th>
-                <th className="py-2">✅</th>
-                <th className="py-2">❌</th>
-                <th className="py-2">📝</th>
+                <th className="py-2">Review mix</th>
                 <th className="py-2">%</th>
                 <th className="py-2">Last review</th>
               </tr>
             </thead>
             <tbody>
-              {sorted.map((r, i) => (
-                <tr key={r.user} className="border-t border-zinc-800">
+              {sorted.map((r, i) => {
+                const approvalPercent = r.total ? Math.round((r.approvals / r.total) * 100) : null
+                return (
+                  <tr key={r.user} className="border-t border-zinc-800">
                   <td className="py-2 font-medium">
                     <span aria-hidden className="mr-1 text-[16px] leading-none align-middle">{medal(i)}</span>
                     <a
                       href={`https://github.com/${encodeURIComponent(r.user)}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-zinc-200 hover:opacity-90"   // no underline now
+                      className="text-zinc-200 hover:opacity-90"
                       title={`Open ${r.user} on GitHub`}
                     >
                       {r.user}
@@ -101,11 +102,11 @@ export default function ReviewersView({ org, windowSel, selectedUsers, onChangeS
                       <div className="text-xs text-zinc-400">{r.displayName}</div>
                     )}
                   </td>
-                  <td className="py-2">{r.total}</td>
-                  <td className="py-2">{r.approvals}</td>
-                  <td className="py-2">{r.changesRequested}</td>
-                  <td className="py-2">{r.commented}</td>
-                  <td className="py-2">{(r.approvals/r.total*100).toFixed(0)}</td>
+                  <td className="py-2 text-base font-semibold">{r.total}</td>
+                  <td className="py-2 pr-6">
+                    <ReviewBar approvals={r.approvals} changesRequested={r.changesRequested} commented={r.commented} />
+                  </td>
+                  <td className="py-2 text-base font-semibold">{approvalPercent === null ? '—' : approvalPercent}</td>
                   <td className="py-2">
                     {r.lastReviewAt ? (
                       <span className={ageClass(r.lastReviewAt)} title={short(r.lastReviewAt)}>
@@ -113,8 +114,9 @@ export default function ReviewersView({ org, windowSel, selectedUsers, onChangeS
                       </span>
                     ) : '—'}
                   </td>
-                </tr>
-              ))}
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}
