@@ -264,6 +264,17 @@ u${index}: user(login:"${esc(login)}") {
     query += `fragment ReviewerContribs on User {
   contributionsCollection(from:"${esc(since)}", organizationID:"${esc(orgId)}") {
     totalCommitContributions
+    commitContributionsByRepository(maxRepositories: 100) {
+      contributions(first:100) {
+        nodes {
+          commitCount
+          repository {
+            name
+            nameWithOwner
+          }
+        }
+      }
+    }
     pullRequestReviewContributions(first:100) {
       totalCount
       nodes {
@@ -306,6 +317,10 @@ u${index}: user(login:"${esc(login)}") {
       lastReviewAt: null as string | null,
       repos: new Set<string>(),
       displayName: null as string | null,
+      commitTotal: Number(
+        userNode?.contributionsCollection?.totalCommitContributions ?? 0
+      ),
+      commitRepos: new Set<string>(),
     };
 
     if (!userNode) {
@@ -384,6 +399,38 @@ u${index}: user(login:"${esc(login)}") {
       }
     }
 
+    type CommitContributionNode = {
+      commitCount?: number | null;
+      repository?: { name?: string | null; nameWithOwner?: string | null } | null;
+    };
+
+    const commitBuckets = (
+      userNode?.contributionsCollection?.commitContributionsByRepository ?? []
+    ) as { contributions?: { nodes?: CommitContributionNode[] | null } | null }[];
+
+    let commitTotalFromNodes = 0;
+
+    for (const bucket of commitBuckets) {
+      const nodes = bucket?.contributions?.nodes ?? [];
+      for (const node of nodes ?? []) {
+        const count = Number(node?.commitCount ?? 0);
+        if (!Number.isNaN(count) && count > 0) {
+          commitTotalFromNodes += count;
+        }
+        const repoSlug =
+          node?.repository?.nameWithOwner ?? node?.repository?.name ?? null;
+        if (repoSlug) {
+          entry.commitRepos.add(repoSlug);
+        }
+      }
+    }
+
+    if (commitTotalFromNodes > 0) {
+      entry.commitTotal = commitTotalFromNodes;
+    } else if (!Number.isFinite(entry.commitTotal)) {
+      entry.commitTotal = 0;
+    }
+
     return entry;
   };
 
@@ -409,6 +456,8 @@ u${index}: user(login:"${esc(login)}") {
       commented: entry.commented,
       lastReviewAt: entry.lastReviewAt,
       repos: Array.from(entry.repos).sort(),
+      commitTotal: entry.commitTotal,
+      commitRepos: Array.from(entry.commitRepos).sort(),
     }))
     .sort((a, b) => b.total - a.total || (b.lastReviewAt ?? "").localeCompare(a.lastReviewAt ?? ""));
 

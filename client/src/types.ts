@@ -40,6 +40,8 @@ export type ReviewerStat = {
   commented: number
   lastReviewAt?: string | null
   repos: string[]
+  commitTotal: number
+  commitRepos: string[]
 }
 
 export type TeamMember = { login: string; name?: string | null }

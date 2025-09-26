@@ -43,6 +43,8 @@ export interface ReviewerStat {
   comments: number;
   lastReviewAt?: string | null;
   repos: string[]; // distinct repos they reviewed in (nameWithOwner or full slug)
+  commitTotal: number;
+  commitRepos: string[];
 }
 export interface TeamMember { login: string; name?: string | null }
 export interface OrgTeam { slug: string; name: string; members: TeamMember[] }
