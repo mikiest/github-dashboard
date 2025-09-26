@@ -76,16 +76,16 @@ export default function ReviewersView({ org, windowSel, selectedUsers, onChangeS
               <tr className="text-left">
                 <th className="py-2">Reviewer</th>
                 <th className="py-2">Total</th>
-                <th className="py-2">✅</th>
-                <th className="py-2">❌</th>
-                <th className="py-2">📝</th>
+                <th className="py-2">Review mix</th>
                 <th className="py-2">%</th>
                 <th className="py-2">Last review</th>
               </tr>
             </thead>
             <tbody>
-              {sorted.map((r, i) => (
-                <tr key={r.user} className="border-t border-zinc-800">
+              {sorted.map((r, i) => {
+                const approvalPercent = r.total ? Math.round((r.approvals / r.total) * 100) : null
+                return (
+                  <tr key={r.user} className="border-t border-zinc-800">
                   <td className="py-2 font-medium">
                     <span aria-hidden className="mr-1 text-[16px] leading-none align-middle">{medal(i)}</span>
                     <a
@@ -102,10 +102,10 @@ export default function ReviewersView({ org, windowSel, selectedUsers, onChangeS
                     )}
                   </td>
                   <td className="py-2">{r.total}</td>
-                  <td className="py-2">{r.approvals}</td>
-                  <td className="py-2">{r.changesRequested}</td>
-                  <td className="py-2">{r.commented}</td>
-                  <td className="py-2">{(r.approvals/r.total*100).toFixed(0)}</td>
+                  <td className="py-2">
+                    <ReviewBar approvals={r.approvals} changesRequested={r.changesRequested} commented={r.commented} />
+                  </td>
+                  <td className="py-2">{approvalPercent === null ? '—' : approvalPercent}</td>
                   <td className="py-2">
                     {r.lastReviewAt ? (
                       <span className={ageClass(r.lastReviewAt)} title={short(r.lastReviewAt)}>
@@ -113,13 +113,72 @@ export default function ReviewersView({ org, windowSel, selectedUsers, onChangeS
                       </span>
                     ) : '—'}
                   </td>
-                </tr>
-              ))}
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}
         {since && <div className="mt-3 text-xs text-zinc-500">Since {short(since)}</div>}
       </div>
+    </div>
+  )
+}
+
+type ReviewBarProps = {
+  approvals: number
+  changesRequested: number
+  commented: number
+}
+
+function ReviewBar({ approvals, changesRequested, commented }: ReviewBarProps) {
+  const total = approvals + changesRequested + commented
+
+  const segments = [
+    { key: 'approvals', label: 'Approvals', value: approvals, color: 'bg-emerald-500' },
+    { key: 'changes', label: 'Changes requested', value: changesRequested, color: 'bg-rose-500' },
+    { key: 'comments', label: 'Comments', value: commented, color: 'bg-zinc-500' },
+  ]
+
+  if (!total) {
+    return (
+      <div className="h-4 w-full rounded-full bg-zinc-800">
+        <span className="sr-only">No reviews yet</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex h-4 w-full items-stretch overflow-hidden rounded-full bg-zinc-800">
+      {segments.map(segment => {
+        const percent = Math.round((segment.value / total) * 100)
+        const segmentClasses = [
+          segment.color,
+          'h-full w-full transition-[filter] duration-150 ease-out',
+          'group-hover:brightness-110 group-focus-visible:brightness-110',
+        ].join(' ')
+
+        const tooltipClasses = [
+          'pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 translate-y-1',
+          'whitespace-nowrap rounded bg-zinc-900 px-2 py-1 text-xs text-zinc-100 opacity-0 shadow-lg transition',
+          'group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100',
+        ].join(' ')
+
+        return (
+          <div
+            key={segment.key}
+            className="relative group flex-1 outline-none"
+            style={{ flexGrow: Math.max(segment.value, 0.0001), flexBasis: 0 }}
+            tabIndex={0}
+            aria-label={`${segment.label}: ${segment.value} (${percent}%)`}
+          >
+            <div className={segmentClasses} />
+            <span className={tooltipClasses}>
+              {segment.label}: {segment.value} ({percent}%)
+            </span>
+          </div>
+        )
+      })}
     </div>
   )
 }
