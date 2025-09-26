@@ -3,9 +3,10 @@ import RepoPicker from './components/RepoPicker'
 import PRList from './components/PRList'
 import ReviewersView from './components/ReviewersView'
 import ReviewersSidebar from './components/ReviewersSidebar'
+import OrgSelectorModal from './components/OrgSelectorModal'
 import { loadSettings, saveSettings } from './store'
-import { useQuery } from '@tanstack/react-query'
-import { fetchTeams } from './api'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { fetchTeams, fetchViewer, fetchOrgMembers } from './api'
 
 
 export default function App() {
@@ -17,6 +18,73 @@ export default function App() {
   const [reviewWindow, setReviewWindow] = useState<'24h'|'7d'|'30d'>('24h')
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
   const [selectedTeams, setSelectedTeams] = useState<string[]>([])
+  const [orgModalOpen, setOrgModalOpen] = useState(false)
+
+  const queryClient = useQueryClient()
+
+  const {
+    data: viewer,
+    isLoading: viewerLoading,
+    isError: viewerError,
+    error: viewerErrorObj,
+  } = useQuery({
+    queryKey: ['viewer'],
+    queryFn: fetchViewer,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  })
+
+  const orgOptions = viewer?.organizations ?? []
+  const selectedOrg = orgOptions.find(o => o.login === org) ?? null
+  const viewerErrorMessage = viewerError
+    ? viewerErrorObj instanceof Error
+      ? viewerErrorObj.message
+      : String(viewerErrorObj ?? 'Unknown error')
+    : ''
+
+  useEffect(() => {
+    if (viewer?.login && viewer.login !== username) {
+      setUsername(viewer.login)
+    }
+  }, [viewer?.login, username])
+
+  useEffect(() => {
+    if (!viewer) return
+    const available = new Set((viewer.organizations ?? []).map(o => o.login))
+    if (org && !available.has(org)) {
+      setOrg('')
+      return
+    }
+    if (!org && available.size === 1) {
+      const only = orgOptions[0]?.login
+      if (only) setOrg(only)
+    }
+  }, [viewer, orgOptions, org])
+
+  useEffect(() => {
+    setSelectedUsers([])
+    setSelectedTeams([])
+  }, [org])
+
+  const requiresOrgSelection = !!viewer && !org && orgOptions.length > 1
+
+  useEffect(() => {
+    if (requiresOrgSelection) {
+      setOrgModalOpen(true)
+    }
+  }, [requiresOrgSelection])
+
+  useEffect(() => {
+    if (!requiresOrgSelection && org && orgModalOpen) {
+      setOrgModalOpen(false)
+    }
+  }, [requiresOrgSelection, org, orgModalOpen])
+
+  useEffect(() => {
+    if (!org) return
+    queryClient.prefetchQuery({ queryKey: ['org-teams', org], queryFn: () => fetchTeams(org) })
+    queryClient.prefetchQuery({ queryKey: ['org-members', org], queryFn: () => fetchOrgMembers(org) })
+  }, [org, queryClient])
 
   const { data: teamsData } = useQuery({
     queryKey: ['org-teams', org],
@@ -34,7 +102,7 @@ export default function App() {
     setFavorites(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name])
   }
 
-  const canShowPRs = org && favorites.length > 0;
+  const canShowPRs = !!org && favorites.length > 0;
 
   const selectedUsersEffective = useMemo(() => {
     if (!selectedTeams.length) return selectedUsers
@@ -50,55 +118,74 @@ export default function App() {
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-8">
-      <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <header className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">GitHub PR Dashboard</h1>
-          <p className="text-zinc-400 text-sm">Pick repos, set your username, and watch your PRs roll in.</p>
+          <p className="text-zinc-400 text-sm">Pick repos and watch your PRs roll in.</p>
         </div>
-        <div className="inline-flex rounded-full border border-zinc-700 overflow-hidden">
-          <button onClick={() => setTab('prs')} className={`px-3 py-1 text-sm ${tab==='prs' ? 'bg-brand-500/20' : ''}`}>PRs</button>
-          <button onClick={() => setTab('reviewers')} className={`px-3 py-1 text-sm ${tab==='reviewers' ? 'bg-brand-500/20' : ''}`}>Reviewers</button>
+        <div className="flex flex-col md:items-end gap-3">
+          <div className="inline-flex rounded-full border border-zinc-700 overflow-hidden self-start md:self-auto">
+            <button onClick={() => setTab('prs')} className={`px-3 py-1 text-sm ${tab==='prs' ? 'bg-brand-500/20' : ''}`}>PRs</button>
+            <button onClick={() => setTab('reviewers')} className={`px-3 py-1 text-sm ${tab==='reviewers' ? 'bg-brand-500/20' : ''}`}>Reviewers</button>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-sm md:justify-end">
+            {viewerLoading ? (
+              <span className="text-zinc-400">Loading GitHub context…</span>
+            ) : viewerError ? (
+              <div className="text-red-300 text-sm max-w-xs">
+                <p>Unable to load GitHub context. Make sure you've run <code className="font-mono text-xs bg-red-500/20 px-1 py-0.5 rounded">gh auth login</code>.</p>
+                {viewerErrorMessage && <p className="text-xs text-red-400/80 mt-1 break-words">{viewerErrorMessage}</p>}
+              </div>
+            ) : viewer ? (
+              <>
+                <div className="flex items-center gap-2 rounded-full border border-zinc-700 px-3 py-1 text-zinc-200">
+                  {viewer.avatarUrl && (
+                    <img src={viewer.avatarUrl} alt={`${viewer.login} avatar`} className="w-6 h-6 rounded-full" />
+                  )}
+                  <span>Hi {viewer.name ?? viewer.login}!</span>
+                </div>
+                {selectedOrg ? (
+                  <button
+                    onClick={() => setOrgModalOpen(true)}
+                    className="flex items-center gap-2 rounded-full border border-zinc-700 px-3 py-1 text-zinc-200 hover:bg-zinc-800 transition"
+                    title="Change organization"
+                  >
+                    {selectedOrg.avatarUrl && (
+                      <img src={selectedOrg.avatarUrl} alt={`${selectedOrg.login} logo`} className="w-6 h-6 rounded-full" />
+                    )}
+                    <span>{selectedOrg.name ?? selectedOrg.login}</span>
+                  </button>
+                ) : orgOptions.length === 0 ? (
+                  <span className="text-xs text-zinc-500">No organizations detected.</span>
+                ) : (
+                  <button
+                    onClick={() => setOrgModalOpen(true)}
+                    className="text-xs px-3 py-1 rounded-full border border-amber-400/60 text-amber-200 hover:bg-amber-500/10 transition"
+                  >
+                    Choose organization
+                  </button>
+                )}
+              </>
+            ) : null}
+          </div>
         </div>
       </header>
       <section className="grid md:grid-cols-3 gap-6">
         <div className="md:col-span-1 card p-4 space-y-5">
           <div>
-            <label className="text-xs uppercase tracking-wider text-zinc-400">Organization</label>
+            <label className="text-xs uppercase tracking-wider text-zinc-400">Refresh (ms)</label>
             <input
+              type="number"
               className="mt-1 w-full rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
-              placeholder="your-org-slug"
-              value={org}
-              onChange={(e) => setOrg(e.target.value.trim())}
+              min={5000}
+              step={1000}
+              value={refreshMs}
+              onChange={(e) => setRefreshMs(Number(e.target.value || 15000))}
             />
-          </div>
-
-          <div>
-            <label className="text-xs uppercase tracking-wider text-zinc-400">GitHub Username (for review highlighting)</label>
-            <input
-              className="mt-1 w-full rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
-              placeholder="your-username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs uppercase tracking-wider text-zinc-400">Refresh (ms)</label>
-              <input
-                type="number"
-                className="mt-1 w-full rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                min={5000}
-                step={1000}
-                value={refreshMs}
-                onChange={(e) => setRefreshMs(Number(e.target.value || 15000))}
-              />
-            </div>
           </div>
           {tab === 'reviewers' ? (
             <ReviewersSidebar
               org={org}
-              windowSel={reviewWindow}
               selectedUsers={selectedUsersEffective}
               onChangeUsers={setSelectedUsers}
               onChangeTeams={setSelectedTeams}
@@ -111,16 +198,41 @@ export default function App() {
 
         <div className="md:col-span-2 card p-4">
           {tab === 'prs' ? (
-            canShowPRs
-              ? <PRList org={org} repos={favorites} username={username} refreshMs={refreshMs} windowSel={reviewWindow} onChangeSelected={setReviewWindow} />
-              : <div className="text-sm text-zinc-400">Select at least one favorite repository to see PRs.</div>
+            canShowPRs ? (
+              <PRList
+                org={org}
+                repos={favorites}
+                username={username}
+                refreshMs={refreshMs}
+                windowSel={reviewWindow}
+                onChangeSelected={setReviewWindow}
+              />
+            ) : (
+              <div className="text-sm text-zinc-400">
+                {org ? 'Select at least one favorite repository to see PRs.' : 'Choose an organization to get started.'}
+              </div>
+            )
           ) : (
-            org
-              ? <ReviewersView org={org} selectedUsers={selectedUsersEffective} windowSel={reviewWindow} onChangeSelected={setReviewWindow}/>
-              : <div className="text-sm text-zinc-400">Enter an organization to see reviewers.</div>
+            org ? (
+              <ReviewersView
+                org={org}
+                selectedUsers={selectedUsersEffective}
+                windowSel={reviewWindow}
+                onChangeSelected={setReviewWindow}
+              />
+            ) : (
+              <div className="text-sm text-zinc-400">Choose an organization to see reviewers.</div>
+            )
           )}
         </div>
       </section>
+      <OrgSelectorModal
+        open={orgModalOpen}
+        options={orgOptions}
+        onSelect={(login) => setOrg(login)}
+        onClose={() => { if (!requiresOrgSelection) setOrgModalOpen(false) }}
+        required={requiresOrgSelection}
+      />
     </div>
   )
 }

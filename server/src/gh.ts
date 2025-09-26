@@ -1,5 +1,12 @@
 import { execa } from "execa";
-import type { PREnriched, Repo, ReviewerStat } from "./types.js";
+import type {
+  PREnriched,
+  Repo,
+  ReviewerStat,
+  OrgTeam,
+  OrgMember,
+  ViewerInfo,
+} from "./types.js";
 
 // Keep your existing ghRepos() (CLI list). You can migrate it later if you want.
 // --- Repo list via CLI (unchanged) ---
@@ -415,11 +422,112 @@ u${index}: user(login:"${esc(login)}") {
   return { since, reviewers };
 }
 
-export async function ghOrgTeams(org: string): Promise<import("./types.js").OrgTeam[]> {
+export async function ghViewerInfo(): Promise<ViewerInfo> {
+  const ORGS_PER_PAGE = Number(process.env.ORGS_PER_PAGE ?? 100);
+  const orgs: ViewerInfo["organizations"] = [];
+  let cursor: string | null = null;
+  let login: string | null = null;
+  let name: string | null = null;
+  let avatarUrl: string | null = null;
+
+  const QUERY = `
+    query($cursor:String) {
+      viewer {
+        login
+        name
+        avatarUrl
+        organizations(first:${ORGS_PER_PAGE}, after:$cursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes { login name avatarUrl }
+        }
+      }
+    }
+  `;
+
+  do {
+    const data = await runGraphQL(QUERY, { cursor });
+    const viewer = data?.viewer ?? null;
+    if (!viewer) break;
+    if (!login) login = viewer.login ?? null;
+    if (!name) name = viewer.name ?? null;
+    if (!avatarUrl) avatarUrl = viewer.avatarUrl ?? null;
+
+    const nodes = viewer.organizations?.nodes ?? [];
+    for (const node of nodes) {
+      const orgLogin = node?.login ?? null;
+      if (!orgLogin) continue;
+      orgs.push({
+        login: orgLogin,
+        name: node?.name ?? null,
+        avatarUrl: node?.avatarUrl ?? null,
+      });
+    }
+
+    const pageInfo = viewer.organizations?.pageInfo;
+    cursor = pageInfo?.hasNextPage ? pageInfo?.endCursor ?? null : null;
+  } while (cursor);
+
+  if (!login) {
+    throw new Error("Unable to determine authenticated user via gh CLI");
+  }
+
+  return {
+    login,
+    name,
+    avatarUrl,
+    organizations: Array.from(new Map(orgs.map((o) => [o.login, o] as const)).values()).sort((a, b) =>
+      (a.name ?? a.login).localeCompare(b.name ?? b.login)
+    ),
+  };
+}
+
+export async function ghOrgMembers(org: string): Promise<OrgMember[]> {
+  const MEMBERS_PER_PAGE = Number(process.env.ORG_MEMBERS_PER_PAGE ?? 100);
+  const members: OrgMember[] = [];
+  let cursor: string | null = null;
+
+  const QUERY = `
+    query($org:String!, $cursor:String) {
+      organization(login:$org) {
+        membersWithRole(first:${MEMBERS_PER_PAGE}, after:$cursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            login
+            name
+            avatarUrl
+          }
+        }
+      }
+    }
+  `;
+
+  do {
+    const data = await runGraphQL(QUERY, { org, cursor });
+    const nodes = data?.organization?.membersWithRole?.nodes ?? [];
+    for (const node of nodes) {
+      const login = node?.login ?? null;
+      if (!login) continue;
+      members.push({
+        login,
+        name: node?.name ?? null,
+        avatarUrl: node?.avatarUrl ?? null,
+      });
+    }
+
+    const pageInfo = data?.organization?.membersWithRole?.pageInfo;
+    cursor = pageInfo?.hasNextPage ? pageInfo?.endCursor ?? null : null;
+  } while (cursor);
+
+  return Array.from(new Map(members.map((m) => [m.login, m] as const)).values()).sort((a, b) =>
+    (a.name ?? a.login).localeCompare(b.name ?? b.login)
+  );
+}
+
+export async function ghOrgTeams(org: string): Promise<OrgTeam[]> {
   const TEAMS_PER_PAGE = Number(process.env.TEAMS_PER_PAGE ?? 50);
   const MEMBERS_PER_PAGE = Number(process.env.TEAM_MEMBERS_PER_PAGE ?? 100);
 
-  const out: import("./types.js").OrgTeam[] = [];
+  const out: OrgTeam[] = [];
   let teamCursor: string | null = null;
 
   const TEAMS_Q = `
@@ -440,7 +548,9 @@ export async function ghOrgTeams(org: string): Promise<import("./types.js").OrgT
           name
           members(first:${MEMBERS_PER_PAGE}, after:$memberCursor) {
             pageInfo { hasNextPage endCursor }
-            nodes { login ... on User { name } }
+            nodes {
+              ... on User { login name avatarUrl }
+            }
           }
         }
       }
@@ -453,12 +563,20 @@ export async function ghOrgTeams(org: string): Promise<import("./types.js").OrgT
     const teams = d?.organization?.teams?.nodes ?? [];
     for (const t of teams) {
       // page through members
-      const members: { login: string; name?: string|null }[] = [];
+      const members: OrgTeam["members"] = [];
       let memberCursor: string | null = null;
       do {
         const md = await runGraphQL(MEMBERS_Q, { org, slug: t.slug, memberCursor });
         const nodes = md?.organization?.team?.members?.nodes ?? [];
-        for (const m of nodes) members.push({ login: m.login, name: m.name ?? null });
+        for (const m of nodes) {
+          const login = m?.login ?? null;
+          if (!login) continue;
+          members.push({
+            login,
+            name: m?.name ?? null,
+            avatarUrl: m?.avatarUrl ?? null,
+          });
+        }
         const pi = md?.organization?.team?.members?.pageInfo;
         memberCursor = pi?.hasNextPage ? pi?.endCursor : null;
       } while (memberCursor);

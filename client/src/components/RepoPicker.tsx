@@ -26,7 +26,7 @@ export default function RepoPicker({ org, favorites, onToggleFavorite }: Props) 
   }, [repos, ql])
 
   
-  if (!org) return <div className="text-sm text-zinc-400">Enter an org to load repos.</div>
+  if (!org) return <div className="text-sm text-zinc-400">Choose an organization to load repos.</div>
   if (isLoading) return <div>Loading repos…</div>
   if (isError) return <div className="text-red-300">Error: {(error as Error).message}</div>
 

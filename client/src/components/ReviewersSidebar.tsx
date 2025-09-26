@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchTopReviewers, fetchTeams } from '../api'
-import type { ReviewerStat, OrgTeam } from '../types'
+import { fetchOrgMembers, fetchTeams } from '../api'
+import type { OrgTeam, OrgMember } from '../types'
 
 type Props = {
   org: string
-  windowSel: '24h'|'7d'|'30d'
   selectedUsers: string[]               // controlled from parent
   selectedTeams: string[]               // team slugs
   onChangeUsers: (users: string[]) => void
@@ -13,25 +12,23 @@ type Props = {
 }
 
 export default function ReviewersSidebar({
-  org, windowSel,
+  org,
   selectedUsers, selectedTeams,
   onChangeUsers, onChangeTeams
 }: Props) {
-  // reviewers (to list users)
-  const { data: reviewersData } = useQuery({
-    queryKey: ['top-reviewers', org, windowSel],
-    queryFn: () => fetchTopReviewers(org, windowSel),
+  // org members (to list users)
+  const { data: membersData, isFetching: membersLoading } = useQuery({
+    queryKey: ['org-members', org],
+    queryFn: () => fetchOrgMembers(org),
     enabled: !!org,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
   });
-  const reviewers: ReviewerStat[] = reviewersData?.reviewers ?? []
+  const members: OrgMember[] = membersData ?? []
   const allUsers = useMemo(() => {
-    const uniq = new Map<string, string | null>()
-    for (const r of reviewers) uniq.set(r.user, r.displayName ?? null)
-    return Array.from(uniq.keys())
-      .map(login => ({ login, alias: login }))
+    return members
+      .map(member => ({ login: member.login, alias: member.name ?? member.login }))
       .sort((a,b) => a.alias.localeCompare(b.alias))
-  }, [reviewers])
+  }, [members])
 
   // teams list
   const { data: teamsData, isFetching: teamsLoading } = useQuery({
@@ -41,6 +38,10 @@ export default function ReviewersSidebar({
     refetchOnWindowFocus: false,
   });
   const teams: OrgTeam[] = teamsData ?? []
+
+  if (!org) {
+    return <div className="text-sm text-zinc-400">Choose an organization to browse members and teams.</div>
+  }
 
   // tabs + search
   const [tab, setTab] = useState<'users'|'teams'>('users')
@@ -87,6 +88,7 @@ export default function ReviewersSidebar({
 
       <div className="flex items-center gap-2 text-xs">
         <button onClick={clear} className="px-2 py-1 rounded-full border border-zinc-700 hover:bg-zinc-800">Clear</button>
+        {tab==='users' && membersLoading && <span className="text-zinc-400">Loading users…</span>}
         {tab==='teams' && teamsLoading && <span className="text-zinc-400">Loading teams…</span>}
       </div>
 
@@ -117,7 +119,11 @@ export default function ReviewersSidebar({
             )
           })
         )}
-        {tab==='users' && filteredUsers.length===0 && <div className="py-4 text-sm text-zinc-400">No users.</div>}
+        {tab==='users' && filteredUsers.length===0 && (
+          <div className="py-4 text-sm text-zinc-400">
+            {membersLoading ? 'Loading users…' : 'No users.'}
+          </div>
+        )}
         {tab==='teams' && filteredTeams.length===0 && <div className="py-4 text-sm text-zinc-400">No teams.</div>}
       </div>
     </div>
