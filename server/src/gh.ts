@@ -6,6 +6,7 @@ import type {
   OrgTeam,
   OrgMember,
   ViewerInfo,
+  OrgStats,
 } from "./types.js";
 
 // Keep your existing ghRepos() (CLI list). You can migrate it later if you want.
@@ -589,4 +590,186 @@ export async function ghOrgTeams(org: string): Promise<OrgTeam[]> {
   } while (teamCursor);
 
   return out;
+}
+
+type MemberContributionNode = {
+  login?: string | null;
+  name?: string | null;
+  avatarUrl?: string | null;
+  contributionsCollection?: {
+    totalCommitContributions?: number | null;
+    totalPullRequestContributions?: number | null;
+    totalPullRequestReviewContributions?: number | null;
+    commitContributionsByRepository?: Array<{
+      repository?: { nameWithOwner?: string | null } | null;
+      contributions?: { totalCount?: number | null } | null;
+    }> | null;
+    pullRequestContributionsByRepository?: Array<{
+      repository?: { nameWithOwner?: string | null } | null;
+      contributions?: { totalCount?: number | null } | null;
+    }> | null;
+    pullRequestReviewContributionsByRepository?: Array<{
+      repository?: { nameWithOwner?: string | null } | null;
+      contributions?: { totalCount?: number | null } | null;
+    }> | null;
+  } | null;
+};
+
+function addToMap(map: Map<string, number>, key: string, amount: number) {
+  if (!key || !Number.isFinite(amount) || amount <= 0) return;
+  map.set(key, (map.get(key) ?? 0) + amount);
+}
+
+function topEntry(map: Map<string, number>): { nameWithOwner: string; count: number } | null {
+  let best: { nameWithOwner: string; count: number } | null = null;
+  for (const [nameWithOwner, count] of map.entries()) {
+    if (!best || count > best.count) {
+      best = { nameWithOwner, count };
+    }
+  }
+  return best;
+}
+
+export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Promise<OrgStats> {
+  const since = buildSinceISO(window);
+
+  const SEARCH_Q = `
+    query($open:String!, $opened:String!, $merged:String!) {
+      open: search(query:$open, type:ISSUE) { issueCount }
+      opened: search(query:$opened, type:ISSUE) { issueCount }
+      merged: search(query:$merged, type:ISSUE) { issueCount }
+    }
+  `;
+
+  const searchData = await runGraphQL(SEARCH_Q, {
+    open: `org:${org} is:pr is:open`,
+    opened: `org:${org} is:pr created:>=${since}`,
+    merged: `org:${org} is:pr is:merged merged:>=${since}`,
+  });
+
+  const totals = {
+    openPRs: Number(searchData?.open?.issueCount ?? 0) || 0,
+    prsOpened: Number(searchData?.opened?.issueCount ?? 0) || 0,
+    prsMerged: Number(searchData?.merged?.issueCount ?? 0) || 0,
+    commits: 0,
+    reviews: 0,
+  } satisfies OrgStats["totals"];
+
+  const MEMBERS_PER_PAGE = Math.min(100, Math.max(1, Number(process.env.ORG_STATS_MEMBERS_PER_PAGE ?? 50)));
+  const REPO_LIMIT = Math.min(100, Math.max(1, Number(process.env.ORG_STATS_REPO_LIMIT ?? 50)));
+
+  const MEMBERS_Q = `
+    query($org:String!, $since:DateTime!, $cursor:String) {
+      organization(login:$org) {
+        membersWithRole(first:${MEMBERS_PER_PAGE}, after:$cursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            login
+            name
+            avatarUrl(size:96)
+            contributionsCollection(from:$since) {
+              totalCommitContributions
+              totalPullRequestContributions
+              totalPullRequestReviewContributions
+              commitContributionsByRepository(maxRepositories:${REPO_LIMIT}) {
+                repository { nameWithOwner }
+                contributions { totalCount }
+              }
+              pullRequestContributionsByRepository(maxRepositories:${REPO_LIMIT}) {
+                repository { nameWithOwner }
+                contributions { totalCount }
+              }
+              pullRequestReviewContributionsByRepository(maxRepositories:${REPO_LIMIT}) {
+                repository { nameWithOwner }
+                contributions { totalCount }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const members: MemberContributionNode[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const data = await runGraphQL(MEMBERS_Q, { org, since, cursor });
+    const connection = data?.organization?.membersWithRole;
+    const nodes = (connection?.nodes ?? []) as MemberContributionNode[];
+    members.push(...nodes);
+    const pageInfo = connection?.pageInfo;
+    cursor = pageInfo?.hasNextPage ? pageInfo?.endCursor ?? null : null;
+  } while (cursor);
+
+  let topReviewer: OrgStats["topUsers"]["reviewer"] = null;
+  let topCommitter: OrgStats["topUsers"]["committer"] = null;
+  let topPROpener: OrgStats["topUsers"]["prOpener"] = null;
+
+  const repoReviews = new Map<string, number>();
+  const repoCommits = new Map<string, number>();
+  const repoOverall = new Map<string, number>();
+
+  for (const member of members) {
+    const login = member?.login ?? null;
+    if (!login) continue;
+    const name = member?.name ?? null;
+    const avatarUrl = member?.avatarUrl ?? null;
+    const contrib = member?.contributionsCollection ?? null;
+
+    const commitCount = Number(contrib?.totalCommitContributions ?? 0) || 0;
+    const prCount = Number(contrib?.totalPullRequestContributions ?? 0) || 0;
+    const reviewCount = Number(contrib?.totalPullRequestReviewContributions ?? 0) || 0;
+
+    totals.commits += commitCount;
+    totals.reviews += reviewCount;
+
+    if (!topReviewer || reviewCount > topReviewer.count) {
+      topReviewer = { login, name, avatarUrl, count: reviewCount };
+    }
+    if (!topCommitter || commitCount > topCommitter.count) {
+      topCommitter = { login, name, avatarUrl, count: commitCount };
+    }
+    if (!topPROpener || prCount > topPROpener.count) {
+      topPROpener = { login, name, avatarUrl, count: prCount };
+    }
+
+    const commitRepos = contrib?.commitContributionsByRepository ?? [];
+    for (const entry of commitRepos ?? []) {
+      const slug = entry?.repository?.nameWithOwner ?? "";
+      const count = Number(entry?.contributions?.totalCount ?? 0) || 0;
+      addToMap(repoCommits, slug, count);
+      addToMap(repoOverall, slug, count);
+    }
+
+    const prRepos = contrib?.pullRequestContributionsByRepository ?? [];
+    for (const entry of prRepos ?? []) {
+      const slug = entry?.repository?.nameWithOwner ?? "";
+      const count = Number(entry?.contributions?.totalCount ?? 0) || 0;
+      addToMap(repoOverall, slug, count);
+    }
+
+    const reviewRepos = contrib?.pullRequestReviewContributionsByRepository ?? [];
+    for (const entry of reviewRepos ?? []) {
+      const slug = entry?.repository?.nameWithOwner ?? "";
+      const count = Number(entry?.contributions?.totalCount ?? 0) || 0;
+      addToMap(repoReviews, slug, count);
+      addToMap(repoOverall, slug, count);
+    }
+  }
+
+  return {
+    since,
+    totals,
+    topUsers: {
+      reviewer: topReviewer,
+      committer: topCommitter,
+      prOpener: topPROpener,
+    },
+    topRepos: {
+      reviews: topEntry(repoReviews),
+      commits: topEntry(repoCommits),
+      contributions: topEntry(repoOverall),
+    },
+  } satisfies OrgStats;
 }

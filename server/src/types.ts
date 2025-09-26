@@ -75,3 +75,38 @@ export interface ViewerInfo {
   avatarUrl?: string | null;
   organizations: ViewerOrg[];
 }
+
+export interface OrgStatUser {
+  login: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+  count: number;
+}
+
+export interface OrgStatRepo {
+  nameWithOwner: string;
+  count: number;
+}
+
+export interface OrgStatsSummary {
+  openPRs: number;
+  prsOpened: number;
+  prsMerged: number;
+  commits: number;
+  reviews: number;
+}
+
+export interface OrgStats {
+  since: string;
+  totals: OrgStatsSummary;
+  topUsers: {
+    reviewer: OrgStatUser | null;
+    committer: OrgStatUser | null;
+    prOpener: OrgStatUser | null;
+  };
+  topRepos: {
+    reviews: OrgStatRepo | null;
+    commits: OrgStatRepo | null;
+    contributions: OrgStatRepo | null;
+  };
+}

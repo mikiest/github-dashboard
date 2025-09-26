@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Repo, PREnriched, ReviewerStat, OrgTeam, ViewerInfo, OrgMember } from './types'
+import type { Repo, PREnriched, ReviewerStat, OrgTeam, ViewerInfo, OrgMember, OrgStats } from './types'
 
 export async function fetchRepos(org: string): Promise<Repo[]> {
   const { data } = await axios.get<{ repos: Repo[] }>(`/api/orgs/${encodeURIComponent(org)}/repos`)
@@ -43,4 +43,9 @@ export async function fetchViewer(): Promise<ViewerInfo> {
 export async function fetchOrgMembers(org: string): Promise<OrgMember[]> {
   const { data } = await axios.get<{ members: OrgMember[] }>(`/api/orgs/${encodeURIComponent(org)}/members`)
   return data.members
+}
+
+export async function fetchOrgStats(org: string, window: '24h'|'7d'|'30d'): Promise<OrgStats> {
+  const { data } = await axios.post<{ stats: OrgStats }>(`/api/orgs/${encodeURIComponent(org)}/stats`, { window })
+  return data.stats
 }
