@@ -9,11 +9,18 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchTeams, fetchViewer, fetchOrgMembers } from './api'
 
 
+const DEFAULT_REFRESH_INTERVAL_MS = 15000
+const REFRESH_INTERVAL_MS = (() => {
+  const raw = import.meta.env.VITE_REFRESH_INTERVAL_MS
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_REFRESH_INTERVAL_MS
+})()
+
+
 export default function App() {
   const [org, setOrg] = useState(loadSettings().org)
   const [username, setUsername] = useState(loadSettings().username)
   const [favorites, setFavorites] = useState<string[]>(loadSettings().favorites)
-  const [refreshMs, setRefreshMs] = useState(loadSettings().refreshMs)
   const [tab, setTab] = useState<'prs'|'reviewers'>('prs')
   const [reviewWindow, setReviewWindow] = useState<'24h'|'7d'|'30d'>('24h')
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
@@ -95,14 +102,15 @@ export default function App() {
   const teams = teamsData ?? []
 
   useEffect(() => {
-    saveSettings({ org, username, favorites, refreshMs })
-  }, [org, username, favorites, refreshMs])
+    saveSettings({ org, username, favorites })
+  }, [org, username, favorites])
 
   const toggleFav = (name: string) => {
     setFavorites(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name])
   }
 
   const canShowPRs = !!org && favorites.length > 0;
+  const hasReviewerSelection = selectedUsers.length > 0 || selectedTeams.length > 0
 
   const selectedUsersEffective = useMemo(() => {
     if (!selectedTeams.length) return selectedUsers
@@ -120,14 +128,10 @@ export default function App() {
     <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-8">
       <header className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">GitHub PR Dashboard</h1>
+          <h1 className="text-2xl font-bold">GitHub Dashboard</h1>
           <p className="text-zinc-400 text-sm">Pick repos and watch your PRs roll in.</p>
         </div>
         <div className="flex flex-col md:items-end gap-3">
-          <div className="inline-flex rounded-full border border-zinc-700 overflow-hidden self-start md:self-auto">
-            <button onClick={() => setTab('prs')} className={`px-3 py-1 text-sm ${tab==='prs' ? 'bg-brand-500/20' : ''}`}>PRs</button>
-            <button onClick={() => setTab('reviewers')} className={`px-3 py-1 text-sm ${tab==='reviewers' ? 'bg-brand-500/20' : ''}`}>Reviewers</button>
-          </div>
           <div className="flex flex-wrap items-center gap-3 text-sm md:justify-end">
             {viewerLoading ? (
               <span className="text-zinc-400">Loading GitHub context…</span>
@@ -142,7 +146,7 @@ export default function App() {
                   {viewer.avatarUrl && (
                     <img src={viewer.avatarUrl} alt={`${viewer.login} avatar`} className="w-6 h-6 rounded-full" />
                   )}
-                  <span>Hi {viewer.name ?? viewer.login}!</span>
+                  <span>Hi {viewer.login}!</span>
                 </div>
                 {selectedOrg ? (
                   <button
@@ -168,21 +172,14 @@ export default function App() {
               </>
             ) : null}
           </div>
+          <div className="inline-flex rounded-full border border-zinc-700 overflow-hidden self-start md:self-auto">
+            <button onClick={() => setTab('prs')} className={`px-3 py-1 text-sm ${tab==='prs' ? 'bg-brand-500/20' : ''}`}>PRs</button>
+            <button onClick={() => setTab('reviewers')} className={`px-3 py-1 text-sm ${tab==='reviewers' ? 'bg-brand-500/20' : ''}`}>Reviewers</button>
+          </div>
         </div>
       </header>
       <section className="grid md:grid-cols-3 gap-6">
-        <div className="md:col-span-1 card p-4 space-y-5">
-          <div>
-            <label className="text-xs uppercase tracking-wider text-zinc-400">Refresh (ms)</label>
-            <input
-              type="number"
-              className="mt-1 w-full rounded-xl bg-zinc-900 border border-zinc-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
-              min={5000}
-              step={1000}
-              value={refreshMs}
-              onChange={(e) => setRefreshMs(Number(e.target.value || 15000))}
-            />
-          </div>
+        <div className="md:col-span-1 card p-4">
           {tab === 'reviewers' ? (
             <ReviewersSidebar
               org={org}
@@ -203,7 +200,7 @@ export default function App() {
                 org={org}
                 repos={favorites}
                 username={username}
-                refreshMs={refreshMs}
+                refreshMs={REFRESH_INTERVAL_MS}
                 windowSel={reviewWindow}
                 onChangeSelected={setReviewWindow}
               />
@@ -217,6 +214,7 @@ export default function App() {
               <ReviewersView
                 org={org}
                 selectedUsers={selectedUsersEffective}
+                hasSelection={hasReviewerSelection}
                 windowSel={reviewWindow}
                 onChangeSelected={setReviewWindow}
               />

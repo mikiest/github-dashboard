@@ -1,5 +1,5 @@
 {
-  "name": "pr-dashboard-server",
+  "name": "github-dashboard-server",
   "private": true,
   "type": "module",
   "main": "dist/index.js",

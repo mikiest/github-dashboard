@@ -1,5 +1,5 @@
 {
-  "name": "pr-dashboard",
+  "name": "github-dashboard",
   "private": true,
   "workspaces": [
     "server",

@@ -8,11 +8,12 @@ import { ReviewBar } from './ReviewBar'
 type Props = {
   org: string
   selectedUsers: string[]
+  hasSelection: boolean
   windowSel: '24h'|'7d'|'30d'
   onChangeSelected: (window: '24h'|'7d'|'30d') => void
 }
 
-export default function ReviewersView({ org, windowSel, selectedUsers, onChangeSelected }: Props) {
+export default function ReviewersView({ org, windowSel, selectedUsers, hasSelection, onChangeSelected }: Props) {
   const sortedUsers = useMemo(() => [...selectedUsers].sort((a, b) => a.localeCompare(b)), [selectedUsers])
 
   const { data, isFetching, refetch, isError, error } = useQuery({
@@ -70,7 +71,9 @@ export default function ReviewersView({ org, windowSel, selectedUsers, onChangeS
         {isError ? (
           <div className="text-red-300">Error: {(error as Error).message}</div>
         ) : sorted.length === 0 ? (
-          <div className="text-sm text-zinc-400">No reviews in this window.</div>
+          <div className="text-sm text-zinc-400">
+            {hasSelection ? 'No reviews in this window.' : 'Select at least one user or team to see reviewer stats.'}
+          </div>
         ) : (
           <table className="w-full text-sm">
             <thead className="text-zinc-400">
