@@ -64,11 +64,14 @@ export type OrgStats = {
   since: string
   totals: {
     openPRs: number
+    stalePRs: number
     prsOpened: number
     prsMerged: number
     prsClosed: number
     commits: number
+    commitRepos: number
     reviews: number
+    reviewRepos: number
   }
   topUsers: {
     reviewer: OrgStatUser[]

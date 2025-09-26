@@ -210,7 +210,10 @@ export default function OrgStatsView({ org, windowSel, onChangeSelected }: Props
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <div className="card p-5 flex flex-col gap-2">
           <span className="text-xs uppercase tracking-wide text-zinc-400">PRs currently open</span>
-          <span className="text-4xl font-semibold text-zinc-100">{formatCount(totals.openPRs)}</span>
+          <div className="flex items-baseline gap-3">
+            <span className="text-4xl font-semibold text-zinc-100">{formatCount(totals.openPRs)}</span>
+            <span className="text-sm text-zinc-500">Stale: {formatCount(totals.stalePRs)}</span>
+          </div>
           <span className="text-xs text-zinc-500">Across the entire organization</span>
         </div>
         <div className="card p-5 flex flex-col gap-4">
@@ -234,12 +237,18 @@ export default function OrgStatsView({ org, windowSel, onChangeSelected }: Props
         </div>
         <div className="card p-5 flex flex-col gap-2">
           <span className="text-xs uppercase tracking-wide text-zinc-400">Commits last {windowLabel}</span>
-          <span className="text-4xl font-semibold text-zinc-100">{formatCount(totals.commits)}</span>
+          <div className="flex items-baseline gap-2">
+            <span className="text-4xl font-semibold text-zinc-100">{formatCount(totals.commits)}</span>
+            <span className="text-sm text-zinc-500">in {formatCount(totals.commitRepos)} repos</span>
+          </div>
           <span className="text-xs text-zinc-500">Committed by org members</span>
         </div>
         <div className="card p-5 flex flex-col gap-2">
           <span className="text-xs uppercase tracking-wide text-zinc-400">Reviews last {windowLabel}</span>
-          <span className="text-4xl font-semibold text-zinc-100">{formatCount(totals.reviews)}</span>
+          <div className="flex items-baseline gap-2">
+            <span className="text-4xl font-semibold text-zinc-100">{formatCount(totals.reviews)}</span>
+            <span className="text-sm text-zinc-500">in {formatCount(totals.reviewRepos)} repos</span>
+          </div>
           <span className="text-xs text-zinc-500">Completed by org members</span>
         </div>
       </div>
