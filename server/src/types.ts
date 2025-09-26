@@ -101,13 +101,13 @@ export interface OrgStats {
   since: string;
   totals: OrgStatsSummary;
   topUsers: {
-    reviewer: OrgStatUser | null;
-    committer: OrgStatUser | null;
-    prOpener: OrgStatUser | null;
+    reviewer: OrgStatUser[];
+    committer: OrgStatUser[];
+    prOpener: OrgStatUser[];
   };
   topRepos: {
-    reviews: OrgStatRepo | null;
-    commits: OrgStatRepo | null;
-    contributions: OrgStatRepo | null;
+    reviews: OrgStatRepo[];
+    commits: OrgStatRepo[];
+    prsOpened: OrgStatRepo[];
   };
 }

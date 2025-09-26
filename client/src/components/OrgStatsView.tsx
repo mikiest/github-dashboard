@@ -14,6 +14,12 @@ const formatter = new Intl.NumberFormat('en-US')
 
 const WINDOW_OPTIONS: Array<'24h' | '7d' | '30d'> = ['24h', '7d', '30d']
 
+const WINDOW_LABEL: Record<Props['windowSel'], string> = {
+  '24h': '24 hours',
+  '7d': '7 days',
+  '30d': '30 days',
+}
+
 function formatCount(value: number | null | undefined) {
   return formatter.format(value ?? 0)
 }
@@ -23,29 +29,81 @@ type HighlightCardProps<T> = {
   entry: T | null
   render: (entry: T) => ReactNode
   loading?: boolean
+  footer?: ReactNode
+  emptyMessage?: string
 }
 
-function HighlightCard<T>({ label, entry, render, loading }: HighlightCardProps<T>) {
+function HighlightCard<T>({ label, entry, render, loading, footer, emptyMessage }: HighlightCardProps<T>) {
   return (
     <div className="card p-4 flex flex-col gap-3">
       <span className="text-xs uppercase tracking-wide text-zinc-400">{label}</span>
       {loading ? (
         <span className="text-sm text-zinc-500">Loading…</span>
       ) : entry ? (
-        render(entry)
+        <>
+          {render(entry)}
+          {footer}
+        </>
       ) : (
-        <span className="text-sm text-zinc-500">No data in this window.</span>
+        <span className="text-sm text-zinc-500">{emptyMessage ?? 'No data in the selected window.'}</span>
       )}
     </div>
   )
 }
 
-function UserHighlight({ label, entry, loading }: { label: string; entry: OrgStatUser | null; loading: boolean }) {
+function UserHighlight({
+  label,
+  entries,
+  loading,
+  windowLabel,
+}: {
+  label: string
+  entries: OrgStatUser[] | undefined
+  loading: boolean
+  windowLabel: string
+}) {
+  const [primary, ...rest] = (entries ?? []).filter((entry) => entry.count > 0)
+  const secondary = rest.slice(0, 2)
+
   return (
     <HighlightCard
       label={label}
-      entry={entry}
+      entry={primary ?? null}
       loading={loading}
+      emptyMessage={`No user activity in the last ${windowLabel}.`}
+      footer={
+        secondary.length ? (
+          <ol className="mt-3 space-y-2 pt-3 border-t border-zinc-800">
+            {secondary.map((user) => (
+              <li key={user.login} className="flex items-center gap-3 justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  {user.avatarUrl ? (
+                    <img
+                      src={user.avatarUrl}
+                      alt={`${user.login} avatar`}
+                      className="w-8 h-8 rounded-full border border-zinc-700"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full border border-zinc-800 bg-zinc-900" />
+                  )}
+                  <div className="min-w-0">
+                    <a
+                      href={`https://github.com/${encodeURIComponent(user.login)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block text-sm font-medium text-zinc-200 truncate hover:text-brand-300"
+                    >
+                      {user.name ?? user.login}
+                    </a>
+                    <div className="text-xs text-zinc-500 truncate">@{user.login}</div>
+                  </div>
+                </div>
+                <span className="text-sm font-semibold text-zinc-200">{formatCount(user.count)}</span>
+              </li>
+            ))}
+          </ol>
+        ) : null
+      }
       render={(user) => (
         <div className="flex items-center gap-4">
           {user.avatarUrl ? (
@@ -71,12 +129,45 @@ function UserHighlight({ label, entry, loading }: { label: string; entry: OrgSta
   )
 }
 
-function RepoHighlight({ label, entry, loading }: { label: string; entry: OrgStatRepo | null; loading: boolean }) {
+function RepoHighlight({
+  label,
+  entries,
+  loading,
+  windowLabel,
+}: {
+  label: string
+  entries: OrgStatRepo[] | undefined
+  loading: boolean
+  windowLabel: string
+}) {
+  const [primary, ...rest] = (entries ?? []).filter((entry) => entry.count > 0)
+  const secondary = rest.slice(0, 2)
+
   return (
     <HighlightCard
       label={label}
-      entry={entry}
+      entry={primary ?? null}
       loading={loading}
+      emptyMessage={`No repository activity in the last ${windowLabel}.`}
+      footer={
+        secondary.length ? (
+          <ol className="mt-3 space-y-2 pt-3 border-t border-zinc-800 text-sm text-zinc-400">
+            {secondary.map((repo) => (
+              <li key={repo.nameWithOwner} className="flex items-center justify-between gap-3">
+                <a
+                  href={`https://github.com/${repo.nameWithOwner}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="truncate hover:text-brand-300"
+                >
+                  {repo.nameWithOwner}
+                </a>
+                <span className="font-semibold text-zinc-200">{formatCount(repo.count)}</span>
+              </li>
+            ))}
+          </ol>
+        ) : null
+      }
       render={(repo) => (
         <div className="flex items-center gap-4">
           <div className="flex-1 min-w-0">
@@ -111,6 +202,7 @@ export default function OrgStatsView({ org, windowSel, onChangeSelected }: Props
 
   const hasOrg = !!org
   const loading = isFetching && !data
+  const windowLabel = WINDOW_LABEL[windowSel]
 
   const overallCards = useMemo(() => {
     if (!totals) return null
@@ -123,7 +215,7 @@ export default function OrgStatsView({ org, windowSel, onChangeSelected }: Props
         </div>
         <div className="card p-5 flex flex-col gap-4">
           <div>
-            <span className="text-xs uppercase tracking-wide text-zinc-400">PRs this window</span>
+            <span className="text-xs uppercase tracking-wide text-zinc-400">PRs last {windowLabel}</span>
             <div className="mt-1 grid gap-4 sm:grid-cols-3">
               <div>
                 <div className="text-sm text-zinc-400">Opened</div>
@@ -141,18 +233,18 @@ export default function OrgStatsView({ org, windowSel, onChangeSelected }: Props
           </div>
         </div>
         <div className="card p-5 flex flex-col gap-2">
-          <span className="text-xs uppercase tracking-wide text-zinc-400">Commits this window</span>
+          <span className="text-xs uppercase tracking-wide text-zinc-400">Commits last {windowLabel}</span>
           <span className="text-4xl font-semibold text-zinc-100">{formatCount(totals.commits)}</span>
           <span className="text-xs text-zinc-500">Committed by org members</span>
         </div>
         <div className="card p-5 flex flex-col gap-2">
-          <span className="text-xs uppercase tracking-wide text-zinc-400">Reviews this window</span>
+          <span className="text-xs uppercase tracking-wide text-zinc-400">Reviews last {windowLabel}</span>
           <span className="text-4xl font-semibold text-zinc-100">{formatCount(totals.reviews)}</span>
           <span className="text-xs text-zinc-500">Completed by org members</span>
         </div>
       </div>
     )
-  }, [totals])
+  }, [totals, windowLabel])
 
   if (!hasOrg) {
     return <div className="card p-6 text-sm text-zinc-400">Choose an organization to explore its activity.</div>
@@ -200,18 +292,48 @@ export default function OrgStatsView({ org, windowSel, onChangeSelected }: Props
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-zinc-100">Top users</h2>
         <div className="grid gap-4 md:grid-cols-3">
-          <UserHighlight label="Top reviewer" entry={topUsers?.reviewer ?? null} loading={loading} />
-          <UserHighlight label="Top committer" entry={topUsers?.committer ?? null} loading={loading} />
-          <UserHighlight label="Top PR opener" entry={topUsers?.prOpener ?? null} loading={loading} />
+          <UserHighlight
+            label="Top reviewer"
+            entries={topUsers?.reviewer}
+            loading={loading}
+            windowLabel={windowLabel}
+          />
+          <UserHighlight
+            label="Top committer"
+            entries={topUsers?.committer}
+            loading={loading}
+            windowLabel={windowLabel}
+          />
+          <UserHighlight
+            label="Top PR opener"
+            entries={topUsers?.prOpener}
+            loading={loading}
+            windowLabel={windowLabel}
+          />
         </div>
       </section>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-zinc-100">Top repositories</h2>
         <div className="grid gap-4 md:grid-cols-3">
-          <RepoHighlight label="Most reviews" entry={topRepos?.reviews ?? null} loading={loading} />
-          <RepoHighlight label="Most commits" entry={topRepos?.commits ?? null} loading={loading} />
-          <RepoHighlight label="Most contributions" entry={topRepos?.contributions ?? null} loading={loading} />
+          <RepoHighlight
+            label="Top reviews"
+            entries={topRepos?.reviews}
+            loading={loading}
+            windowLabel={windowLabel}
+          />
+          <RepoHighlight
+            label="Top commits"
+            entries={topRepos?.commits}
+            loading={loading}
+            windowLabel={windowLabel}
+          />
+          <RepoHighlight
+            label="Top PRs opened"
+            entries={topRepos?.prsOpened}
+            loading={loading}
+            windowLabel={windowLabel}
+          />
         </div>
       </section>
     </div>

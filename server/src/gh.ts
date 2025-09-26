@@ -7,6 +7,8 @@ import type {
   OrgMember,
   ViewerInfo,
   OrgStats,
+  OrgStatUser,
+  OrgStatRepo,
 } from "./types.js";
 
 // Keep your existing ghRepos() (CLI list). You can migrate it later if you want.
@@ -620,14 +622,30 @@ function addToMap(map: Map<string, number>, key: string, amount: number) {
   map.set(key, (map.get(key) ?? 0) + amount);
 }
 
-function topEntry(map: Map<string, number>): { nameWithOwner: string; count: number } | null {
-  let best: { nameWithOwner: string; count: number } | null = null;
-  for (const [nameWithOwner, count] of map.entries()) {
-    if (!best || count > best.count) {
-      best = { nameWithOwner, count };
-    }
+function recordUserStat(
+  map: Map<string, OrgStatUser>,
+  login: string,
+  name: string | null,
+  avatarUrl: string | null,
+  count: number
+) {
+  if (!login || !Number.isFinite(count) || count <= 0) return;
+  const existing = map.get(login);
+  if (!existing || count > existing.count) {
+    map.set(login, { login, name: name ?? undefined, avatarUrl: avatarUrl ?? undefined, count });
   }
-  return best;
+}
+
+function mapToTopUsers(map: Map<string, OrgStatUser>, limit = 3) {
+  return [...map.values()].filter((entry) => entry.count > 0).sort((a, b) => b.count - a.count).slice(0, limit);
+}
+
+function mapToTopRepos(map: Map<string, number>, limit = 3): OrgStatRepo[] {
+  return [...map.entries()]
+    .map(([nameWithOwner, count]) => ({ nameWithOwner, count }))
+    .filter((entry) => entry.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
 }
 
 export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Promise<OrgStats> {
@@ -708,13 +726,13 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
     cursor = pageInfo?.hasNextPage ? pageInfo?.endCursor ?? null : null;
   } while (cursor);
 
-  let topReviewer: OrgStats["topUsers"]["reviewer"] = null;
-  let topCommitter: OrgStats["topUsers"]["committer"] = null;
-  let topPROpener: OrgStats["topUsers"]["prOpener"] = null;
+  const reviewerStats = new Map<string, OrgStatUser>();
+  const committerStats = new Map<string, OrgStatUser>();
+  const prOpenerStats = new Map<string, OrgStatUser>();
 
   const repoReviews = new Map<string, number>();
   const repoCommits = new Map<string, number>();
-  const repoOverall = new Map<string, number>();
+  const repoPROpens = new Map<string, number>();
 
   for (const member of members) {
     const login = member?.login ?? null;
@@ -730,15 +748,9 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
     totals.commits += commitCount;
     totals.reviews += reviewCount;
 
-    if (!topReviewer || reviewCount > topReviewer.count) {
-      topReviewer = { login, name, avatarUrl, count: reviewCount };
-    }
-    if (!topCommitter || commitCount > topCommitter.count) {
-      topCommitter = { login, name, avatarUrl, count: commitCount };
-    }
-    if (!topPROpener || prCount > topPROpener.count) {
-      topPROpener = { login, name, avatarUrl, count: prCount };
-    }
+    recordUserStat(reviewerStats, login, name, avatarUrl, reviewCount);
+    recordUserStat(committerStats, login, name, avatarUrl, commitCount);
+    recordUserStat(prOpenerStats, login, name, avatarUrl, prCount);
 
     const commitRepos = contrib?.commitContributionsByRepository ?? [];
     for (const entry of commitRepos ?? []) {
@@ -746,7 +758,6 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
       if (!slug || slug.split("/")[0]?.toLowerCase() !== orgLower) continue;
       const count = Number(entry?.contributions?.totalCount ?? 0) || 0;
       addToMap(repoCommits, slug, count);
-      addToMap(repoOverall, slug, count);
     }
 
     const prRepos = contrib?.pullRequestContributionsByRepository ?? [];
@@ -754,7 +765,7 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
       const slug = entry?.repository?.nameWithOwner ?? "";
       if (!slug || slug.split("/")[0]?.toLowerCase() !== orgLower) continue;
       const count = Number(entry?.contributions?.totalCount ?? 0) || 0;
-      addToMap(repoOverall, slug, count);
+      addToMap(repoPROpens, slug, count);
     }
 
     const reviewRepos = contrib?.pullRequestReviewContributionsByRepository ?? [];
@@ -763,22 +774,25 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
       if (!slug || slug.split("/")[0]?.toLowerCase() !== orgLower) continue;
       const count = Number(entry?.contributions?.totalCount ?? 0) || 0;
       addToMap(repoReviews, slug, count);
-      addToMap(repoOverall, slug, count);
     }
   }
+
+  const topReviewers = mapToTopUsers(reviewerStats);
+  const topCommitters = mapToTopUsers(committerStats);
+  const topPROpeners = mapToTopUsers(prOpenerStats);
 
   return {
     since,
     totals,
     topUsers: {
-      reviewer: topReviewer,
-      committer: topCommitter,
-      prOpener: topPROpener,
+      reviewer: topReviewers,
+      committer: topCommitters,
+      prOpener: topPROpeners,
     },
     topRepos: {
-      reviews: topEntry(repoReviews),
-      commits: topEntry(repoCommits),
-      contributions: topEntry(repoOverall),
+      reviews: mapToTopRepos(repoReviews),
+      commits: mapToTopRepos(repoCommits),
+      prsOpened: mapToTopRepos(repoPROpens),
     },
   } satisfies OrgStats;
 }
