@@ -38,6 +38,12 @@ export async function ghRepos(org: string): Promise<Repo[]> {
 const ghBin = process.env.GH_BIN ?? "gh";
 const PR_LIMIT = Number(process.env.PR_LIMIT ?? 50);      // PRs per repo
 const REPO_BATCH = Number(process.env.REPO_BATCH ?? 8);   // repos per GraphQL query
+const DEFAULT_STALE_PR_WINDOW_DAYS = 14;
+const staleWindowDaysRaw = Number(process.env.STALE_PR_WINDOW_DAYS);
+const STALE_PR_WINDOW_DAYS =
+  Number.isFinite(staleWindowDaysRaw) && staleWindowDaysRaw > 0
+    ? staleWindowDaysRaw
+    : DEFAULT_STALE_PR_WINDOW_DAYS;
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -191,6 +197,12 @@ export async function ghPRsAcross(
 
 function buildSinceISO(window: "24h" | "7d" | "30d"): string {
   const ms = { "24h": 24*60*60e3, "7d": 7*24*60*60e3, "30d": 30*24*60*60e3 }[window];
+  return new Date(Date.now() - ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function buildSinceISOFromDays(days: number): string {
+  const safeDays = Number.isFinite(days) && days > 0 ? days : DEFAULT_STALE_PR_WINDOW_DAYS;
+  const ms = safeDays * 24 * 60 * 60 * 1000;
   return new Date(Date.now() - ms).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
@@ -650,10 +662,12 @@ function mapToTopRepos(map: Map<string, number>, limit = 3): OrgStatRepo[] {
 
 export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Promise<OrgStats> {
   const since = buildSinceISO(window);
+  const staleSince = buildSinceISOFromDays(STALE_PR_WINDOW_DAYS);
 
   const SEARCH_Q = `
-    query($open:String!, $opened:String!, $merged:String!, $closed:String!) {
+    query($open:String!, $stale:String!, $opened:String!, $merged:String!, $closed:String!) {
       open: search(query:$open, type:ISSUE) { issueCount }
+      stale: search(query:$stale, type:ISSUE) { issueCount }
       opened: search(query:$opened, type:ISSUE) { issueCount }
       merged: search(query:$merged, type:ISSUE) { issueCount }
       closed: search(query:$closed, type:ISSUE) { issueCount }
@@ -662,6 +676,7 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
 
   const searchData = await runGraphQL(SEARCH_Q, {
     open: `org:${org} is:pr is:open`,
+    stale: `org:${org} is:pr is:open updated:<${staleSince}`,
     opened: `org:${org} is:pr created:>=${since}`,
     merged: `org:${org} is:pr is:merged merged:>=${since}`,
     closed: `org:${org} is:pr is:closed -is:merged closed:>=${since}`,
@@ -669,11 +684,14 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
 
   const totals = {
     openPRs: Number(searchData?.open?.issueCount ?? 0) || 0,
+    stalePRs: Number(searchData?.stale?.issueCount ?? 0) || 0,
     prsOpened: Number(searchData?.opened?.issueCount ?? 0) || 0,
     prsMerged: Number(searchData?.merged?.issueCount ?? 0) || 0,
     prsClosed: Number(searchData?.closed?.issueCount ?? 0) || 0,
     commits: 0,
+    commitRepos: 0,
     reviews: 0,
+    reviewRepos: 0,
   } satisfies OrgStats["totals"];
 
   const orgId = await getOrgId(org);
@@ -780,6 +798,9 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
   const topReviewers = mapToTopUsers(reviewerStats);
   const topCommitters = mapToTopUsers(committerStats);
   const topPROpeners = mapToTopUsers(prOpenerStats);
+
+  totals.commitRepos = repoCommits.size;
+  totals.reviewRepos = repoReviews.size;
 
   return {
     since,

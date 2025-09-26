@@ -90,11 +90,14 @@ export interface OrgStatRepo {
 
 export interface OrgStatsSummary {
   openPRs: number;
+  stalePRs: number;
   prsOpened: number;
   prsMerged: number;
   prsClosed: number;
   commits: number;
+  commitRepos: number;
   reviews: number;
+  reviewRepos: number;
 }
 
 export interface OrgStats {
