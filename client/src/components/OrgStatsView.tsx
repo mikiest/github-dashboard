@@ -124,14 +124,18 @@ export default function OrgStatsView({ org, windowSel, onChangeSelected }: Props
         <div className="card p-5 flex flex-col gap-4">
           <div>
             <span className="text-xs uppercase tracking-wide text-zinc-400">PRs this window</span>
-            <div className="mt-1 flex items-baseline gap-4">
+            <div className="mt-1 grid gap-4 sm:grid-cols-3">
               <div>
                 <div className="text-sm text-zinc-400">Opened</div>
                 <div className="text-3xl font-semibold text-emerald-300">{formatCount(totals.prsOpened)}</div>
               </div>
               <div>
                 <div className="text-sm text-zinc-400">Merged</div>
-                <div className="text-3xl font-semibold text-sky-300">{formatCount(totals.prsMerged)}</div>
+                <div className="text-3xl font-semibold text-purple-300">{formatCount(totals.prsMerged)}</div>
+              </div>
+              <div>
+                <div className="text-sm text-zinc-400">Closed</div>
+                <div className="text-3xl font-semibold text-rose-300">{formatCount(totals.prsClosed)}</div>
               </div>
             </div>
           </div>

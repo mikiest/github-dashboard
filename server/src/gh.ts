@@ -634,10 +634,11 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
   const since = buildSinceISO(window);
 
   const SEARCH_Q = `
-    query($open:String!, $opened:String!, $merged:String!) {
+    query($open:String!, $opened:String!, $merged:String!, $closed:String!) {
       open: search(query:$open, type:ISSUE) { issueCount }
       opened: search(query:$opened, type:ISSUE) { issueCount }
       merged: search(query:$merged, type:ISSUE) { issueCount }
+      closed: search(query:$closed, type:ISSUE) { issueCount }
     }
   `;
 
@@ -645,21 +646,26 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
     open: `org:${org} is:pr is:open`,
     opened: `org:${org} is:pr created:>=${since}`,
     merged: `org:${org} is:pr is:merged merged:>=${since}`,
+    closed: `org:${org} is:pr is:closed -is:merged closed:>=${since}`,
   });
 
   const totals = {
     openPRs: Number(searchData?.open?.issueCount ?? 0) || 0,
     prsOpened: Number(searchData?.opened?.issueCount ?? 0) || 0,
     prsMerged: Number(searchData?.merged?.issueCount ?? 0) || 0,
+    prsClosed: Number(searchData?.closed?.issueCount ?? 0) || 0,
     commits: 0,
     reviews: 0,
   } satisfies OrgStats["totals"];
+
+  const orgId = await getOrgId(org);
+  const orgLower = org.toLowerCase();
 
   const MEMBERS_PER_PAGE = Math.min(100, Math.max(1, Number(process.env.ORG_STATS_MEMBERS_PER_PAGE ?? 50)));
   const REPO_LIMIT = Math.min(100, Math.max(1, Number(process.env.ORG_STATS_REPO_LIMIT ?? 50)));
 
   const MEMBERS_Q = `
-    query($org:String!, $since:DateTime!, $cursor:String) {
+    query($org:String!, $since:DateTime!, $orgId:ID!, $cursor:String) {
       organization(login:$org) {
         membersWithRole(first:${MEMBERS_PER_PAGE}, after:$cursor) {
           pageInfo { hasNextPage endCursor }
@@ -667,7 +673,7 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
             login
             name
             avatarUrl(size:96)
-            contributionsCollection(from:$since) {
+            contributionsCollection(from:$since, organizationID:$orgId) {
               totalCommitContributions
               totalPullRequestContributions
               totalPullRequestReviewContributions
@@ -694,7 +700,7 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
   let cursor: string | null = null;
 
   do {
-    const data = await runGraphQL(MEMBERS_Q, { org, since, cursor });
+    const data = await runGraphQL(MEMBERS_Q, { org, since, cursor, orgId });
     const connection = data?.organization?.membersWithRole;
     const nodes = (connection?.nodes ?? []) as MemberContributionNode[];
     members.push(...nodes);
@@ -737,6 +743,7 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
     const commitRepos = contrib?.commitContributionsByRepository ?? [];
     for (const entry of commitRepos ?? []) {
       const slug = entry?.repository?.nameWithOwner ?? "";
+      if (!slug || slug.split("/")[0]?.toLowerCase() !== orgLower) continue;
       const count = Number(entry?.contributions?.totalCount ?? 0) || 0;
       addToMap(repoCommits, slug, count);
       addToMap(repoOverall, slug, count);
@@ -745,6 +752,7 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
     const prRepos = contrib?.pullRequestContributionsByRepository ?? [];
     for (const entry of prRepos ?? []) {
       const slug = entry?.repository?.nameWithOwner ?? "";
+      if (!slug || slug.split("/")[0]?.toLowerCase() !== orgLower) continue;
       const count = Number(entry?.contributions?.totalCount ?? 0) || 0;
       addToMap(repoOverall, slug, count);
     }
@@ -752,6 +760,7 @@ export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Pro
     const reviewRepos = contrib?.pullRequestReviewContributionsByRepository ?? [];
     for (const entry of reviewRepos ?? []) {
       const slug = entry?.repository?.nameWithOwner ?? "";
+      if (!slug || slug.split("/")[0]?.toLowerCase() !== orgLower) continue;
       const count = Number(entry?.contributions?.totalCount ?? 0) || 0;
       addToMap(repoReviews, slug, count);
       addToMap(repoOverall, slug, count);

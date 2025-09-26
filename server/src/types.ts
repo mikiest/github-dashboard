@@ -92,6 +92,7 @@ export interface OrgStatsSummary {
   openPRs: number;
   prsOpened: number;
   prsMerged: number;
+  prsClosed: number;
   commits: number;
   reviews: number;
 }
