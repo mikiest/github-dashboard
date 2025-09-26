@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { z } from "zod";
-import { ghRepos, ghPRsAcross, ghTopReviewers, ghOrgTeams, ghViewerInfo, ghOrgMembers } from "./gh.js";
+import { ghRepos, ghPRsAcross, ghTopReviewers, ghOrgTeams, ghViewerInfo, ghOrgMembers, ghOrgStats } from "./gh.js";
 
 
 dotenv.config();
@@ -100,6 +100,26 @@ app.get("/api/orgs/:org/members", async (req, res) => {
     const org = z.string().min(1).parse(req.params.org);
     const members = await ghOrgMembers(org);
     res.json({ members });
+  } catch (e: any) {
+    const msg = `${e?.stderr ?? ""} ${e?.message ?? ""}`;
+    if (/rate limit|abuse/i.test(msg) || e?.exitCode === 403) {
+      return res.status(429).json({ error: "GitHub rate limit", retryAfterMs: 60000 });
+    }
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+
+const OrgStatsBody = z.object({
+  window: z.enum(['24h','7d','30d']).default('24h'),
+});
+
+app.post("/api/orgs/:org/stats", async (req, res) => {
+  try {
+    const org = z.string().min(1).parse(req.params.org);
+    const body = OrgStatsBody.parse(req.body ?? {});
+    const stats = await ghOrgStats(org, body.window);
+    res.json({ stats });
   } catch (e: any) {
     const msg = `${e?.stderr ?? ""} ${e?.message ?? ""}`;
     if (/rate limit|abuse/i.test(msg) || e?.exitCode === 403) {

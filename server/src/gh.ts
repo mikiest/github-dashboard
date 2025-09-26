@@ -6,6 +6,9 @@ import type {
   OrgTeam,
   OrgMember,
   ViewerInfo,
+  OrgStats,
+  OrgStatUser,
+  OrgStatRepo,
 } from "./types.js";
 
 // Keep your existing ghRepos() (CLI list). You can migrate it later if you want.
@@ -589,4 +592,207 @@ export async function ghOrgTeams(org: string): Promise<OrgTeam[]> {
   } while (teamCursor);
 
   return out;
+}
+
+type MemberContributionNode = {
+  login?: string | null;
+  name?: string | null;
+  avatarUrl?: string | null;
+  contributionsCollection?: {
+    totalCommitContributions?: number | null;
+    totalPullRequestContributions?: number | null;
+    totalPullRequestReviewContributions?: number | null;
+    commitContributionsByRepository?: Array<{
+      repository?: { nameWithOwner?: string | null } | null;
+      contributions?: { totalCount?: number | null } | null;
+    }> | null;
+    pullRequestContributionsByRepository?: Array<{
+      repository?: { nameWithOwner?: string | null } | null;
+      contributions?: { totalCount?: number | null } | null;
+    }> | null;
+    pullRequestReviewContributionsByRepository?: Array<{
+      repository?: { nameWithOwner?: string | null } | null;
+      contributions?: { totalCount?: number | null } | null;
+    }> | null;
+  } | null;
+};
+
+function addToMap(map: Map<string, number>, key: string, amount: number) {
+  if (!key || !Number.isFinite(amount) || amount <= 0) return;
+  map.set(key, (map.get(key) ?? 0) + amount);
+}
+
+function recordUserStat(
+  map: Map<string, OrgStatUser>,
+  login: string,
+  name: string | null,
+  avatarUrl: string | null,
+  count: number
+) {
+  if (!login || !Number.isFinite(count) || count <= 0) return;
+  const existing = map.get(login);
+  if (!existing || count > existing.count) {
+    map.set(login, { login, name: name ?? undefined, avatarUrl: avatarUrl ?? undefined, count });
+  }
+}
+
+function mapToTopUsers(map: Map<string, OrgStatUser>, limit = 3) {
+  return [...map.values()].filter((entry) => entry.count > 0).sort((a, b) => b.count - a.count).slice(0, limit);
+}
+
+function mapToTopRepos(map: Map<string, number>, limit = 3): OrgStatRepo[] {
+  return [...map.entries()]
+    .map(([nameWithOwner, count]) => ({ nameWithOwner, count }))
+    .filter((entry) => entry.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+}
+
+export async function ghOrgStats(org: string, window: "24h" | "7d" | "30d"): Promise<OrgStats> {
+  const since = buildSinceISO(window);
+
+  const SEARCH_Q = `
+    query($open:String!, $opened:String!, $merged:String!, $closed:String!) {
+      open: search(query:$open, type:ISSUE) { issueCount }
+      opened: search(query:$opened, type:ISSUE) { issueCount }
+      merged: search(query:$merged, type:ISSUE) { issueCount }
+      closed: search(query:$closed, type:ISSUE) { issueCount }
+    }
+  `;
+
+  const searchData = await runGraphQL(SEARCH_Q, {
+    open: `org:${org} is:pr is:open`,
+    opened: `org:${org} is:pr created:>=${since}`,
+    merged: `org:${org} is:pr is:merged merged:>=${since}`,
+    closed: `org:${org} is:pr is:closed -is:merged closed:>=${since}`,
+  });
+
+  const totals = {
+    openPRs: Number(searchData?.open?.issueCount ?? 0) || 0,
+    prsOpened: Number(searchData?.opened?.issueCount ?? 0) || 0,
+    prsMerged: Number(searchData?.merged?.issueCount ?? 0) || 0,
+    prsClosed: Number(searchData?.closed?.issueCount ?? 0) || 0,
+    commits: 0,
+    reviews: 0,
+  } satisfies OrgStats["totals"];
+
+  const orgId = await getOrgId(org);
+  const orgLower = org.toLowerCase();
+
+  const MEMBERS_PER_PAGE = Math.min(100, Math.max(1, Number(process.env.ORG_STATS_MEMBERS_PER_PAGE ?? 50)));
+  const REPO_LIMIT = Math.min(100, Math.max(1, Number(process.env.ORG_STATS_REPO_LIMIT ?? 50)));
+
+  const MEMBERS_Q = `
+    query($org:String!, $since:DateTime!, $orgId:ID!, $cursor:String) {
+      organization(login:$org) {
+        membersWithRole(first:${MEMBERS_PER_PAGE}, after:$cursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            login
+            name
+            avatarUrl(size:96)
+            contributionsCollection(from:$since, organizationID:$orgId) {
+              totalCommitContributions
+              totalPullRequestContributions
+              totalPullRequestReviewContributions
+              commitContributionsByRepository(maxRepositories:${REPO_LIMIT}) {
+                repository { nameWithOwner }
+                contributions { totalCount }
+              }
+              pullRequestContributionsByRepository(maxRepositories:${REPO_LIMIT}) {
+                repository { nameWithOwner }
+                contributions { totalCount }
+              }
+              pullRequestReviewContributionsByRepository(maxRepositories:${REPO_LIMIT}) {
+                repository { nameWithOwner }
+                contributions { totalCount }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const members: MemberContributionNode[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const data = await runGraphQL(MEMBERS_Q, { org, since, cursor, orgId });
+    const connection = data?.organization?.membersWithRole;
+    const nodes = (connection?.nodes ?? []) as MemberContributionNode[];
+    members.push(...nodes);
+    const pageInfo = connection?.pageInfo;
+    cursor = pageInfo?.hasNextPage ? pageInfo?.endCursor ?? null : null;
+  } while (cursor);
+
+  const reviewerStats = new Map<string, OrgStatUser>();
+  const committerStats = new Map<string, OrgStatUser>();
+  const prOpenerStats = new Map<string, OrgStatUser>();
+
+  const repoReviews = new Map<string, number>();
+  const repoCommits = new Map<string, number>();
+  const repoPROpens = new Map<string, number>();
+
+  for (const member of members) {
+    const login = member?.login ?? null;
+    if (!login) continue;
+    const name = member?.name ?? null;
+    const avatarUrl = member?.avatarUrl ?? null;
+    const contrib = member?.contributionsCollection ?? null;
+
+    const commitCount = Number(contrib?.totalCommitContributions ?? 0) || 0;
+    const prCount = Number(contrib?.totalPullRequestContributions ?? 0) || 0;
+    const reviewCount = Number(contrib?.totalPullRequestReviewContributions ?? 0) || 0;
+
+    totals.commits += commitCount;
+    totals.reviews += reviewCount;
+
+    recordUserStat(reviewerStats, login, name, avatarUrl, reviewCount);
+    recordUserStat(committerStats, login, name, avatarUrl, commitCount);
+    recordUserStat(prOpenerStats, login, name, avatarUrl, prCount);
+
+    const commitRepos = contrib?.commitContributionsByRepository ?? [];
+    for (const entry of commitRepos ?? []) {
+      const slug = entry?.repository?.nameWithOwner ?? "";
+      if (!slug || slug.split("/")[0]?.toLowerCase() !== orgLower) continue;
+      const count = Number(entry?.contributions?.totalCount ?? 0) || 0;
+      addToMap(repoCommits, slug, count);
+    }
+
+    const prRepos = contrib?.pullRequestContributionsByRepository ?? [];
+    for (const entry of prRepos ?? []) {
+      const slug = entry?.repository?.nameWithOwner ?? "";
+      if (!slug || slug.split("/")[0]?.toLowerCase() !== orgLower) continue;
+      const count = Number(entry?.contributions?.totalCount ?? 0) || 0;
+      addToMap(repoPROpens, slug, count);
+    }
+
+    const reviewRepos = contrib?.pullRequestReviewContributionsByRepository ?? [];
+    for (const entry of reviewRepos ?? []) {
+      const slug = entry?.repository?.nameWithOwner ?? "";
+      if (!slug || slug.split("/")[0]?.toLowerCase() !== orgLower) continue;
+      const count = Number(entry?.contributions?.totalCount ?? 0) || 0;
+      addToMap(repoReviews, slug, count);
+    }
+  }
+
+  const topReviewers = mapToTopUsers(reviewerStats);
+  const topCommitters = mapToTopUsers(committerStats);
+  const topPROpeners = mapToTopUsers(prOpenerStats);
+
+  return {
+    since,
+    totals,
+    topUsers: {
+      reviewer: topReviewers,
+      committer: topCommitters,
+      prOpener: topPROpeners,
+    },
+    topRepos: {
+      reviews: mapToTopRepos(repoReviews),
+      commits: mapToTopRepos(repoCommits),
+      prsOpened: mapToTopRepos(repoPROpens),
+    },
+  } satisfies OrgStats;
 }

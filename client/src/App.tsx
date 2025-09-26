@@ -4,6 +4,7 @@ import PRList from './components/PRList'
 import ReviewersView from './components/ReviewersView'
 import ReviewersSidebar from './components/ReviewersSidebar'
 import OrgSelectorModal from './components/OrgSelectorModal'
+import OrgStatsView from './components/OrgStatsView'
 import { loadSettings, saveSettings } from './store'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchTeams, fetchViewer, fetchOrgMembers } from './api'
@@ -21,7 +22,7 @@ export default function App() {
   const [org, setOrg] = useState(loadSettings().org)
   const [username, setUsername] = useState(loadSettings().username)
   const [favorites, setFavorites] = useState<string[]>(loadSettings().favorites)
-  const [tab, setTab] = useState<'prs'|'reviewers'>('prs')
+  const [tab, setTab] = useState<'org'|'prs'|'reviewers'>('org')
   const [reviewWindow, setReviewWindow] = useState<'24h'|'7d'|'30d'>('24h')
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
   const [selectedTeams, setSelectedTeams] = useState<string[]>([])
@@ -127,9 +128,12 @@ export default function App() {
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-8">
       <header className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">GitHub Dashboard</h1>
-          <p className="text-zinc-400 text-sm">Pick repos and watch your PRs roll in.</p>
+        <div class="flex items-center gap-4">
+          <img src="./logo.svg" alt="GitHub Dashboard" class="w-14 h-14 rounded-full border border-zinc-700"/>
+          <div class="flex-1 min-w-0">
+            <h1 className="text-2xl font-bold">GitHub Dashboard</h1>
+            <p className="text-zinc-400 text-sm">Monitor organization health, pull requests, and reviews in one place.</p>
+          </div>
         </div>
         <div className="flex flex-col md:items-end gap-3">
           <div className="flex flex-wrap items-center gap-3 text-sm md:justify-end">
@@ -173,57 +177,62 @@ export default function App() {
             ) : null}
           </div>
           <div className="inline-flex rounded-full border border-zinc-700 overflow-hidden self-start md:self-auto">
+            <button onClick={() => setTab('org')} className={`px-3 py-1 text-sm ${tab==='org' ? 'bg-brand-500/20' : ''}`}>Org</button>
             <button onClick={() => setTab('prs')} className={`px-3 py-1 text-sm ${tab==='prs' ? 'bg-brand-500/20' : ''}`}>PRs</button>
-            <button onClick={() => setTab('reviewers')} className={`px-3 py-1 text-sm ${tab==='reviewers' ? 'bg-brand-500/20' : ''}`}>Reviewers</button>
+            <button onClick={() => setTab('reviewers')} className={`px-3 py-1 text-sm ${tab==='reviewers' ? 'bg-brand-500/20' : ''}`}>Reviews</button>
           </div>
         </div>
       </header>
-      <section className="grid md:grid-cols-3 gap-6">
-        <div className="md:col-span-1 card p-4">
-          {tab === 'reviewers' ? (
-            <ReviewersSidebar
-              org={org}
-              selectedUsers={selectedUsersEffective}
-              onChangeUsers={setSelectedUsers}
-              onChangeTeams={setSelectedTeams}
-              selectedTeams={selectedTeams}
-            />
-          ) : (
-            <RepoPicker org={org} favorites={favorites} onToggleFavorite={toggleFav} />
-          )}
-        </div>
-
-        <div className="md:col-span-2 card p-4">
-          {tab === 'prs' ? (
-            canShowPRs ? (
-              <PRList
-                org={org}
-                repos={favorites}
-                username={username}
-                refreshMs={REFRESH_INTERVAL_MS}
-                windowSel={reviewWindow}
-                onChangeSelected={setReviewWindow}
-              />
-            ) : (
-              <div className="text-sm text-zinc-400">
-                {org ? 'Select at least one favorite repository to see PRs.' : 'Choose an organization to get started.'}
-              </div>
-            )
-          ) : (
-            org ? (
-              <ReviewersView
+      {tab === 'org' ? (
+        <OrgStatsView org={org} windowSel={reviewWindow} onChangeSelected={setReviewWindow} />
+      ) : (
+        <section className="grid md:grid-cols-3 gap-6">
+          <div className="md:col-span-1 card p-4">
+            {tab === 'reviewers' ? (
+              <ReviewersSidebar
                 org={org}
                 selectedUsers={selectedUsersEffective}
-                hasSelection={hasReviewerSelection}
-                windowSel={reviewWindow}
-                onChangeSelected={setReviewWindow}
+                onChangeUsers={setSelectedUsers}
+                onChangeTeams={setSelectedTeams}
+                selectedTeams={selectedTeams}
               />
             ) : (
-              <div className="text-sm text-zinc-400">Choose an organization to see reviewers.</div>
-            )
-          )}
-        </div>
-      </section>
+              <RepoPicker org={org} favorites={favorites} onToggleFavorite={toggleFav} />
+            )}
+          </div>
+
+          <div className="md:col-span-2 card p-4">
+            {tab === 'prs' ? (
+              canShowPRs ? (
+                <PRList
+                  org={org}
+                  repos={favorites}
+                  username={username}
+                  refreshMs={REFRESH_INTERVAL_MS}
+                  windowSel={reviewWindow}
+                  onChangeSelected={setReviewWindow}
+                />
+              ) : (
+                <div className="text-sm text-zinc-400">
+                  {org ? 'Select at least one favorite repository to see PRs.' : 'Choose an organization to get started.'}
+                </div>
+              )
+            ) : (
+              org ? (
+                <ReviewersView
+                  org={org}
+                  selectedUsers={selectedUsersEffective}
+                  hasSelection={hasReviewerSelection}
+                  windowSel={reviewWindow}
+                  onChangeSelected={setReviewWindow}
+                />
+              ) : (
+                <div className="text-sm text-zinc-400">Choose an organization to see reviewers.</div>
+              )
+            )}
+          </div>
+        </section>
+      )}
       <OrgSelectorModal
         open={orgModalOpen}
         options={orgOptions}

@@ -47,3 +47,37 @@ export type OrgTeam = { slug: string; name: string; members: TeamMember[] }
 export type OrgMember = { login: string; name?: string | null; avatarUrl?: string | null }
 export type ViewerOrg = { login: string; name?: string | null; avatarUrl?: string | null }
 export type ViewerInfo = { login: string; name?: string | null; avatarUrl?: string | null; organizations: ViewerOrg[] }
+
+export type OrgStatUser = {
+  login: string
+  name?: string | null
+  avatarUrl?: string | null
+  count: number
+}
+
+export type OrgStatRepo = {
+  nameWithOwner: string
+  count: number
+}
+
+export type OrgStats = {
+  since: string
+  totals: {
+    openPRs: number
+    prsOpened: number
+    prsMerged: number
+    prsClosed: number
+    commits: number
+    reviews: number
+  }
+  topUsers: {
+    reviewer: OrgStatUser[]
+    committer: OrgStatUser[]
+    prOpener: OrgStatUser[]
+  }
+  topRepos: {
+    reviews: OrgStatRepo[]
+    commits: OrgStatRepo[]
+    prsOpened: OrgStatRepo[]
+  }
+}
