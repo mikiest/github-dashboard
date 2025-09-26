@@ -73,7 +73,7 @@ function UserHighlight({
       emptyMessage={`No user activity in the last ${windowLabel}.`}
       footer={
         secondary.length ? (
-          <ol className="mt-3 space-y-2 pt-3 border-t border-zinc-800">
+          <ol className="space-y-2 border-t border-zinc-800">
             {secondary.map((user) => (
               <li key={user.login} className="flex items-center gap-3 justify-between">
                 <div className="flex items-center gap-3 min-w-0">
@@ -151,7 +151,7 @@ function RepoHighlight({
       emptyMessage={`No repository activity in the last ${windowLabel}.`}
       footer={
         secondary.length ? (
-          <ol className="mt-3 space-y-2 pt-3 border-t border-zinc-800 text-sm text-zinc-400">
+          <ol className="space-y-2 border-t border-zinc-800 text-sm text-zinc-400">
             {secondary.map((repo) => (
               <li key={repo.nameWithOwner} className="flex items-center justify-between gap-3">
                 <a
