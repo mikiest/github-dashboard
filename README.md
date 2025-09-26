@@ -32,7 +32,8 @@ Lightweight dashboard to keep an eye on pull requests across your favorite org r
 
 ## Configure access
 
-1. Copy `server/.env.example` to `server/.env` and tweak values if needed (org slug, ports, limits).
+1. Copy `server/.env.example` to `server/.env` and tweak values if needed (org slug, ports, stale window, limits).
+   * Set `STALE_PR_WINDOW_DAYS` to control how many days without updates qualifies an open PR as stale in the org overview (defaults to 14).
 2. Log in with the GitHub CLI so the server can query data:
    ```bash
    gh auth status
