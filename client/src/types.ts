@@ -42,5 +42,8 @@ export type ReviewerStat = {
   repos: string[]
 }
 
-export type TeamMember = { login: string; name?: string | null }
+export type TeamMember = { login: string; name?: string | null; avatarUrl?: string | null }
 export type OrgTeam = { slug: string; name: string; members: TeamMember[] }
+export type OrgMember = { login: string; name?: string | null; avatarUrl?: string | null }
+export type ViewerOrg = { login: string; name?: string | null; avatarUrl?: string | null }
+export type ViewerInfo = { login: string; name?: string | null; avatarUrl?: string | null; organizations: ViewerOrg[] }

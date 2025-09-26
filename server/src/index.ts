@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { z } from "zod";
-import { ghRepos, ghPRsAcross, ghTopReviewers, ghOrgTeams } from "./gh.js";
+import { ghRepos, ghPRsAcross, ghTopReviewers, ghOrgTeams, ghViewerInfo, ghOrgMembers } from "./gh.js";
 
 
 dotenv.config();
@@ -70,6 +70,16 @@ app.post("/api/reviewers/top", async (req, res) => {
 });
 
 
+app.get("/api/viewer", async (_req, res) => {
+  try {
+    const viewer = await ghViewerInfo();
+    res.json({ viewer });
+  } catch (e: any) {
+    const msg = `${e?.stderr ?? ""} ${e?.message ?? ""}`.trim();
+    res.status(400).json({ error: msg || "Unable to load viewer info" });
+  }
+});
+
 app.get("/api/orgs/:org/teams", async (req, res) => {
   try {
     const org = z.string().min(1).parse(req.params.org);
@@ -77,6 +87,21 @@ app.get("/api/orgs/:org/teams", async (req, res) => {
     res.json({ teams });
   } catch (e:any) {
     const msg = `${e?.stderr ?? ''} ${e?.message ?? ''}`;
+    if (/rate limit|abuse/i.test(msg) || e?.exitCode === 403) {
+      return res.status(429).json({ error: "GitHub rate limit", retryAfterMs: 60000 });
+    }
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+
+app.get("/api/orgs/:org/members", async (req, res) => {
+  try {
+    const org = z.string().min(1).parse(req.params.org);
+    const members = await ghOrgMembers(org);
+    res.json({ members });
+  } catch (e: any) {
+    const msg = `${e?.stderr ?? ""} ${e?.message ?? ""}`;
     if (/rate limit|abuse/i.test(msg) || e?.exitCode === 403) {
       return res.status(429).json({ error: "GitHub rate limit", retryAfterMs: 60000 });
     }

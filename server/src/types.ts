@@ -44,5 +44,34 @@ export interface ReviewerStat {
   lastReviewAt?: string | null;
   repos: string[]; // distinct repos they reviewed in (nameWithOwner or full slug)
 }
-export interface TeamMember { login: string; name?: string | null }
-export interface OrgTeam { slug: string; name: string; members: TeamMember[] }
+
+export interface TeamMember {
+  login: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+}
+
+export interface OrgTeam {
+  slug: string;
+  name: string;
+  members: TeamMember[];
+}
+
+export interface OrgMember {
+  login: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+}
+
+export interface ViewerOrg {
+  login: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+}
+
+export interface ViewerInfo {
+  login: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+  organizations: ViewerOrg[];
+}

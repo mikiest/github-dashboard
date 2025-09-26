@@ -1,8 +1,8 @@
-# GitHub PR Dashboard
+# GitHub Dashboard
 
 Lightweight dashboard to keep an eye on pull requests across your favorite org repos. It’s vibe coded and built for folks who just want the signal without the fluff.
 
-![Screenshot of PR Dashboard](./gh.jpg)
+![Screenshot of the GitHub Dashboard](./gh.jpg)
 
 ## What it does
 
@@ -42,15 +42,20 @@ Lightweight dashboard to keep an eye on pull requests across your favorite org r
 
 ## Using the dashboard
 
-1. Enter your org and GitHub username (for highlight purposes only).
-2. Favorite repos via the picker; results persist in your browser.
-3. Browse PRs, toggle open/merged, search, pin important ones, or jump to the reviewers tab for leaderboard vibes.
+1. Log in with the GitHub CLI and launch the app. Your username and orgs load automatically.
+2. If you belong to multiple orgs, pick one from the modal. Otherwise the app picks the only org for you.
+3. Favorite repos via the picker; results persist in your browser.
+4. Browse PRs, toggle open/merged, search, pin important ones, or jump to the reviewers tab for leaderboard vibes.
+
+### Refresh cadence
+
+Set the poll interval for PR data via the `VITE_REFRESH_INTERVAL_MS` environment variable in `client/.env`. It defaults to 15000 milliseconds.
 
 ## Troubleshooting
 
 * Make sure the server logs “API listening on http://localhost:4000”.
 * Install the GitHub CLI and set `GH_BIN` in `.env` if it isn’t on your PATH.
-* If rate-limited, increase the refresh interval or reduce the repo list.
+* If rate-limited, increase `VITE_REFRESH_INTERVAL_MS` or reduce the repo list.
 
 Have fun and keep shipping. ❤️
 
