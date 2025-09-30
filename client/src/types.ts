@@ -85,7 +85,7 @@ export type OrgStats = {
   }
 }
 
-export type ActivityType = 'commit' | 'review' | 'merge'
+export type ActivityType = 'pr_opened' | 'pr_closed' | 'pr_merged' | 'review'
 
 export type ActivityUser = {
   login: string
@@ -93,13 +93,21 @@ export type ActivityUser = {
   avatarUrl?: string | null
 }
 
-export type ActivityCommitData = {
-  type: 'commit'
-  branch?: string | null
-  commitCount: number
-  message?: string | null
-  sha?: string | null
-  url?: string | null
+export type ActivityPROpenedData = {
+  type: 'pr_opened'
+  prNumber: number
+  prTitle?: string | null
+  prUrl?: string | null
+  author?: ActivityUser | null
+}
+
+export type ActivityPRClosedData = {
+  type: 'pr_closed'
+  prNumber: number
+  prTitle?: string | null
+  prUrl?: string | null
+  author?: ActivityUser | null
+  closedBy?: ActivityUser | null
 }
 
 export type ActivityReviewData = {
@@ -111,19 +119,21 @@ export type ActivityReviewData = {
   author?: ActivityUser | null
 }
 
-export type ActivityMergeData = {
-  type: 'merge'
+export type ActivityPRMergedData = {
+  type: 'pr_merged'
   prNumber: number
   prTitle?: string | null
   prUrl?: string | null
   author?: ActivityUser | null
   mergedBy?: ActivityUser | null
+  commitCount?: number | null
 }
 
 export type ActivityItem =
-  | { id: string; type: 'commit'; occurredAt: string; repo: string; actor: ActivityUser; data: ActivityCommitData }
   | { id: string; type: 'review'; occurredAt: string; repo: string; actor: ActivityUser; data: ActivityReviewData }
-  | { id: string; type: 'merge'; occurredAt: string; repo: string; actor: ActivityUser; data: ActivityMergeData }
+  | { id: string; type: 'pr_opened'; occurredAt: string; repo: string; actor: ActivityUser; data: ActivityPROpenedData }
+  | { id: string; type: 'pr_closed'; occurredAt: string; repo: string; actor: ActivityUser; data: ActivityPRClosedData }
+  | { id: string; type: 'pr_merged'; occurredAt: string; repo: string; actor: ActivityUser; data: ActivityPRMergedData }
 
 export type ActivityResponse = {
   items: ActivityItem[]

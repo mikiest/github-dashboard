@@ -131,7 +131,7 @@ app.post("/api/orgs/:org/stats", async (req, res) => {
 
 
 const ActivityBody = z.object({
-  types: z.array(z.enum(["commit", "review", "merge"])).optional(),
+  types: z.array(z.enum(["pr_opened", "pr_closed", "pr_merged", "review"])).optional(),
   repo: z.string().min(1).optional(),
   username: z.string().min(1).optional(),
   fullname: z.string().min(1).optional(),

@@ -230,23 +230,13 @@ function sanitizeLogin(login?: string | null): string | null {
   return String(login).trim();
 }
 
-type CommitSearchNode = {
-  oid?: string | null;
-  abbreviatedOid?: string | null;
-  committedDate?: string | null;
-  message?: string | null;
-  messageHeadline?: string | null;
-  url?: string | null;
-  commitUrl?: string | null;
-  repository?: { nameWithOwner?: string | null } | null;
-  author?: {
+type ClosedEventNode = {
+  __typename?: string | null;
+  createdAt?: string | null;
+  actor?: {
+    login?: string | null;
+    avatarUrl?: string | null;
     name?: string | null;
-    email?: string | null;
-    user?: {
-      login?: string | null;
-      name?: string | null;
-      avatarUrl?: string | null;
-    } | null;
   } | null;
 };
 
@@ -270,6 +260,9 @@ type PullRequestNode = {
     avatarUrl?: string | null;
     name?: string | null;
   } | null;
+  commits?: {
+    totalCount?: number | null;
+  } | null;
   reviews?: {
     nodes?: {
       databaseId?: number | null;
@@ -283,17 +276,12 @@ type PullRequestNode = {
       } | null;
     }[] | null;
   } | null;
+  timelineItems?: {
+    nodes?: (ClosedEventNode | null | undefined)[] | null;
+  } | null;
 };
 
 const ACTIVITY_MAX_AGE_DAYS = Number(process.env.ACTIVITY_MAX_AGE_DAYS ?? 90);
-
-function buildCommitSearchQuery(org: string, repoFilter?: string | null): string {
-  const terms = [`org:${org}`, "sort:committer-date-desc"];
-  if (repoFilter && repoFilter.includes("/")) {
-    terms.push(`repo:${repoFilter}`);
-  }
-  return terms.join(" ");
-}
 
 function buildPrSearchQuery(org: string, repoFilter?: string | null): string {
   const terms = [`org:${org}`, "is:pr", "sort:updated-desc"];
@@ -315,39 +303,78 @@ function buildActorFromGraphQL(
   };
 }
 
-function mapCommitNode(node: CommitSearchNode | null | undefined): ActivityItem | null {
-  if (!node) return null;
-  const repo = node.repository?.nameWithOwner ?? null;
-  const user = node.author?.user ?? null;
-  const login = sanitizeLogin(user?.login ?? null);
-  if (!repo || !login) return null;
+function mapPrOpenedNode(pr: PullRequestNode, cutoff: number): ActivityItem | null {
+  const createdAt = pr.createdAt ?? null;
+  const repo = pr.repository?.nameWithOwner ?? null;
+  const prNumber = pr.number ?? null;
+  if (!createdAt || !repo || !prNumber) return null;
 
-  const actor: ActivityUser = {
-    login,
-    name: user?.name ?? node.author?.name ?? null,
-    avatarUrl: user?.avatarUrl ?? null,
-  };
+  const createdTime = Date.parse(createdAt);
+  if (!Number.isFinite(createdTime) || createdTime < cutoff) return null;
 
-  const occurredAt = node.committedDate ?? null;
-  if (!occurredAt) return null;
-
-  const sha = node.oid ?? null;
-  const message = node.messageHeadline ?? node.message ?? null;
-  const url = node.commitUrl ?? node.url ?? (sha ? `https://github.com/${repo}/commit/${sha}` : null);
+  const author = buildActorFromGraphQL(pr.author ?? null);
+  if (!author) return null;
 
   return {
-    id: `commit:${sha ?? `${repo}:${occurredAt}`}`,
-    type: "commit",
-    occurredAt,
+    id: `pr_opened:${pr.id ?? `${repo}:${prNumber}`}:${createdAt}`,
+    type: "pr_opened",
+    occurredAt: new Date(createdTime).toISOString(),
     repo,
-    actor,
+    actor: author,
     data: {
-      type: "commit",
-      branch: null,
-      commitCount: 1,
-      message: message ?? null,
-      sha,
-      url: url ?? null,
+      type: "pr_opened",
+      prNumber,
+      prTitle: pr.title ?? null,
+      prUrl: pr.url ?? null,
+      author,
+    },
+  };
+}
+
+function mapPrClosedNode(pr: PullRequestNode, cutoff: number): ActivityItem | null {
+  const closedAt = pr.closedAt ?? null;
+  if (!closedAt || pr.mergedAt) return null;
+
+  const repo = pr.repository?.nameWithOwner ?? null;
+  const prNumber = pr.number ?? null;
+  if (!repo || !prNumber) return null;
+
+  const closedTime = Date.parse(closedAt);
+  if (!Number.isFinite(closedTime) || closedTime < cutoff) return null;
+
+  const timelineNodes = pr.timelineItems?.nodes ?? [];
+  let closedActor: ActivityUser | null = null;
+
+  for (const node of timelineNodes ?? []) {
+    if (!node || node.__typename !== "ClosedEvent") continue;
+    const nodeTime = node.createdAt ? Date.parse(node.createdAt) : Number.NaN;
+    if (Number.isFinite(nodeTime) && Math.abs(nodeTime - closedTime) <= 60 * 1000) {
+      closedActor = buildActorFromGraphQL(node.actor ?? null);
+      if (closedActor) break;
+    }
+  }
+
+  if (!closedActor) {
+    closedActor = buildActorFromGraphQL(pr.author ?? null);
+  }
+
+  if (!closedActor) return null;
+
+  const author = buildActorFromGraphQL(pr.author ?? null);
+
+  return {
+    id: `pr_closed:${pr.id ?? `${repo}:${prNumber}`}:${closedAt}`,
+    type: "pr_closed",
+    occurredAt: new Date(closedTime).toISOString(),
+    repo,
+    actor: closedActor,
+    data: {
+      type: "pr_closed",
+      prNumber,
+      prTitle: pr.title ?? null,
+      prUrl: pr.url ?? null,
+      author,
+      closedBy: closedActor,
     },
   };
 }
@@ -402,25 +429,29 @@ function mapMergeNode(pr: PullRequestNode, cutoff: number): ActivityItem | null 
   const repo = pr.repository?.nameWithOwner ?? null;
   if (!repo) return null;
 
-  const actor = buildActorFromGraphQL(pr.mergedBy ?? pr.author ?? null);
+  const mergedBy = buildActorFromGraphQL(pr.mergedBy ?? null);
+  const fallbackActor = buildActorFromGraphQL(pr.author ?? null);
+  const actor = mergedBy ?? fallbackActor;
   if (!actor) return null;
 
   const author = buildActorFromGraphQL(pr.author ?? null);
-  const mergedBy = buildActorFromGraphQL(pr.mergedBy ?? null);
+  const commitCountValue = Number(pr.commits?.totalCount ?? Number.NaN);
+  const commitCount = Number.isFinite(commitCountValue) ? commitCountValue : null;
 
   return {
-    id: `merge:${pr.id ?? `${repo}:${pr.number ?? ""}`}:${mergedAt}`,
-    type: "merge",
+    id: `pr_merged:${pr.id ?? `${repo}:${pr.number ?? ""}`}:${mergedAt}`,
+    type: "pr_merged",
     occurredAt: new Date(mergedTime).toISOString(),
     repo,
     actor,
     data: {
-      type: "merge",
+      type: "pr_merged",
       prNumber: pr.number ?? 0,
       prTitle: pr.title ?? null,
       prUrl: pr.url ?? null,
       author,
       mergedBy,
+      commitCount,
     },
   };
 }
@@ -431,9 +462,11 @@ export async function ghOrgActivity(org: string, options: ActivityFetchOptions =
   const perPage = Number.isFinite(perPageRaw) && perPageRaw > 0 ? Math.min(Math.max(perPageRaw, 5), 50) : 30;
 
   const typeSet = new Set((options.types ?? []).map((t) => t));
-  const needCommits = !typeSet.size || typeSet.has("commit");
+  const needPrOpened = !typeSet.size || typeSet.has("pr_opened");
+  const needPrClosed = !typeSet.size || typeSet.has("pr_closed");
+  const needPrMerged = !typeSet.size || typeSet.has("pr_merged");
   const needReviews = !typeSet.size || typeSet.has("review");
-  const needMerges = !typeSet.size || typeSet.has("merge");
+  const needPullRequests = needPrOpened || needPrClosed || needPrMerged || needReviews;
 
   const repoFilter = options.repo?.trim() || null;
 
@@ -441,10 +474,7 @@ export async function ghOrgActivity(org: string, options: ActivityFetchOptions =
   const varDefs: string[] = [];
   let query = "query";
 
-  if (needCommits) {
-    varDefs.push("$commitQuery:String!", "$commitFirst:Int!");
-  }
-  if (needReviews || needMerges) {
+  if (needPullRequests) {
     varDefs.push("$prQuery:String!", "$prFirst:Int!");
   }
 
@@ -454,40 +484,7 @@ export async function ghOrgActivity(org: string, options: ActivityFetchOptions =
 
   query += " {";
 
-  if (needCommits) {
-    const fetchMultiplier = Math.max(3, page + 1);
-    const commitFirst = Math.min(100, Math.max(perPage * fetchMultiplier, perPage));
-    vars.commitQuery = buildCommitSearchQuery(org, repoFilter ?? null);
-    vars.commitFirst = String(commitFirst);
-
-    query += `
-      commits: search(query: $commitQuery, type: COMMITS, first: $commitFirst) {
-        nodes {
-          ... on Commit {
-            oid
-            abbreviatedOid
-            committedDate
-            message
-            messageHeadline
-            url
-            commitUrl
-            repository { nameWithOwner }
-            author {
-              name
-              email
-              user {
-                login
-                name
-                avatarUrl
-              }
-            }
-          }
-        }
-      }
-    `;
-  }
-
-  if (needReviews || needMerges) {
+  if (needPullRequests) {
     const fetchMultiplier = Math.max(3, page + 1);
     const prFirst = Math.min(100, Math.max(perPage * fetchMultiplier, perPage));
     vars.prQuery = buildPrSearchQuery(org, repoFilter ?? null);
@@ -520,7 +517,8 @@ export async function ghOrgActivity(org: string, options: ActivityFetchOptions =
               avatarUrl
               ... on User { name }
             }
-            reviews(last: 20) {
+            commits { totalCount }
+            reviews(first: 50) {
               nodes {
                 databaseId
                 state
@@ -534,6 +532,23 @@ export async function ghOrgActivity(org: string, options: ActivityFetchOptions =
                   ... on Mannequin { name }
                   ... on EnterpriseUserAccount { name }
                   ... on Bot { id }
+                }
+              }
+            }
+            timelineItems(last: 20, itemTypes: [CLOSED_EVENT]) {
+              nodes {
+                __typename
+                ... on ClosedEvent {
+                  createdAt
+                  actor {
+                    login
+                    avatarUrl
+                    ... on User { name }
+                    ... on Organization { name }
+                    ... on Mannequin { name }
+                    ... on EnterpriseUserAccount { name }
+                    ... on Bot { id }
+                  }
                 }
               }
             }
@@ -553,30 +568,34 @@ export async function ghOrgActivity(org: string, options: ActivityFetchOptions =
 
   const items: ActivityItem[] = [];
 
-  if (needCommits) {
-    const commitNodes: (CommitSearchNode | null | undefined)[] = data?.commits?.nodes ?? [];
-    for (const node of commitNodes) {
-      const mapped = mapCommitNode(node);
-      if (!mapped) continue;
-      const occurredTime = Date.parse(mapped.occurredAt);
-      if (Number.isFinite(occurredTime) && occurredTime >= cutoffMs) {
-        items.push(mapped);
-      }
+  const prNodes: PullRequestNode[] = needPullRequests
+    ? (data?.prs?.nodes ?? []).filter((node: any) => node != null) as PullRequestNode[]
+    : [];
+
+  if (needPrOpened) {
+    for (const pr of prNodes) {
+      const mapped = mapPrOpenedNode(pr, cutoffMs);
+      if (mapped) items.push(mapped);
     }
   }
 
-  const prNodes: PullRequestNode[] = (data?.prs?.nodes ?? []).filter((node: any) => node != null) as PullRequestNode[];
+  if (needPrClosed) {
+    for (const pr of prNodes) {
+      const mapped = mapPrClosedNode(pr, cutoffMs);
+      if (mapped) items.push(mapped);
+    }
+  }
+
+  if (needPrMerged) {
+    for (const pr of prNodes) {
+      const mapped = mapMergeNode(pr, cutoffMs);
+      if (mapped) items.push(mapped);
+    }
+  }
 
   if (needReviews) {
     for (const pr of prNodes) {
       items.push(...mapReviewNodes(pr, cutoffMs));
-    }
-  }
-
-  if (needMerges) {
-    for (const pr of prNodes) {
-      const mapped = mapMergeNode(pr, cutoffMs);
-      if (mapped) items.push(mapped);
     }
   }
 
@@ -591,7 +610,14 @@ export async function ghOrgActivity(org: string, options: ActivityFetchOptions =
     if (usernameFilter) {
       const logins: string[] = [item.actor.login];
       if (item.type === "review" && item.data.author?.login) logins.push(item.data.author.login);
-      if (item.type === "merge") {
+      if (item.type === "pr_opened" && item.data.author?.login) {
+        logins.push(item.data.author.login);
+      }
+      if (item.type === "pr_closed") {
+        if (item.data.author?.login) logins.push(item.data.author.login);
+        if (item.data.closedBy?.login) logins.push(item.data.closedBy.login);
+      }
+      if (item.type === "pr_merged") {
         if (item.data.author?.login) logins.push(item.data.author.login);
         if (item.data.mergedBy?.login) logins.push(item.data.mergedBy.login);
       }
@@ -604,7 +630,14 @@ export async function ghOrgActivity(org: string, options: ActivityFetchOptions =
       const names: string[] = [];
       if (item.actor.name) names.push(item.actor.name);
       if (item.type === "review" && item.data.author?.name) names.push(item.data.author.name);
-      if (item.type === "merge") {
+      if (item.type === "pr_opened" && item.data.author?.name) {
+        names.push(item.data.author.name);
+      }
+      if (item.type === "pr_closed") {
+        if (item.data.author?.name) names.push(item.data.author.name);
+        if (item.data.closedBy?.name) names.push(item.data.closedBy.name);
+      }
+      if (item.type === "pr_merged") {
         if (item.data.author?.name) names.push(item.data.author.name);
         if (item.data.mergedBy?.name) names.push(item.data.mergedBy.name);
       }

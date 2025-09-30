@@ -5,18 +5,20 @@ import type { ActivityItem, ActivityType, ActivityResponse } from '../types'
 import { fromNow, short } from '../lib_time'
 
 const TYPE_LABEL: Record<ActivityType, string> = {
-  commit: 'Commit',
+  pr_opened: 'PR Opened',
+  pr_closed: 'PR Closed',
+  pr_merged: 'PR Merged',
   review: 'Review',
-  merge: 'Merge',
 }
 
 const TYPE_BADGE_CLASS: Record<ActivityType, string> = {
-  commit: 'bg-blue-500/10 text-blue-200 border border-blue-500/30',
+  pr_opened: 'bg-blue-500/10 text-blue-200 border border-blue-500/30',
+  pr_closed: 'bg-amber-500/10 text-amber-200 border border-amber-500/30',
+  pr_merged: 'bg-purple-500/10 text-purple-200 border border-purple-500/30',
   review: 'bg-emerald-500/10 text-emerald-200 border border-emerald-500/30',
-  merge: 'bg-purple-500/10 text-purple-200 border border-purple-500/30',
 }
 
-const TYPE_OPTIONS: ActivityType[] = ['commit', 'review', 'merge']
+const TYPE_OPTIONS: ActivityType[] = ['pr_opened', 'pr_closed', 'pr_merged', 'review']
 
 const PAGE_SIZE = 20
 
@@ -36,41 +38,6 @@ function useDebouncedValue<T>(value: T, delay: number) {
 }
 
 function ActivitySummary({ item }: { item: ActivityItem }) {
-  if (item.type === 'commit') {
-    const { commitCount, branch, message, url } = item.data
-    return (
-      <div className="space-y-1 text-sm text-zinc-200">
-        <p>
-          <span className="font-semibold">{commitCount}</span>{' '}
-          commit{commitCount === 1 ? '' : 's'} pushed
-          {branch ? (
-            <>
-              {' '}to <span className="font-mono text-blue-200">{branch}</span>
-            </>
-          ) : null}
-          .
-        </p>
-        {message ? (
-          <p className="text-xs text-zinc-400 truncate" title={message}>
-            “{message}”
-          </p>
-        ) : null}
-        {url ? (
-          <p>
-            <a
-              href={url}
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs text-blue-300 hover:text-blue-200"
-            >
-              View latest commit →
-            </a>
-          </p>
-        ) : null}
-      </div>
-    )
-  }
-
   if (item.type === 'review') {
     const { state, prNumber, prTitle, prUrl, author } = item.data
     const stateLabel = state.toLowerCase().replace(/_/g, ' ')
@@ -104,7 +71,61 @@ function ActivitySummary({ item }: { item: ActivityItem }) {
     )
   }
 
-  const { prNumber, prTitle, prUrl, author, mergedBy } = item.data
+  if (item.type === 'pr_opened') {
+    const { prNumber, prTitle, prUrl } = item.data
+    return (
+      <div className="space-y-1 text-sm text-zinc-200">
+        <p>
+          Opened{' '}
+          <a
+            href={prUrl ?? '#'}
+            target={prUrl ? '_blank' : undefined}
+            rel={prUrl ? 'noreferrer' : undefined}
+            className={prUrl ? 'text-blue-300 hover:text-blue-200' : 'text-zinc-200'}
+          >
+            PR #{prNumber}
+          </a>{' '}
+          {prTitle ? `“${prTitle}”` : ''}.
+        </p>
+      </div>
+    )
+  }
+
+  if (item.type === 'pr_closed') {
+    const { prNumber, prTitle, prUrl, author, closedBy } = item.data
+    return (
+      <div className="space-y-1 text-sm text-zinc-200">
+        <p>
+          Closed{' '}
+          <a
+            href={prUrl ?? '#'}
+            target={prUrl ? '_blank' : undefined}
+            rel={prUrl ? 'noreferrer' : undefined}
+            className={prUrl ? 'text-amber-300 hover:text-amber-200' : 'text-zinc-200'}
+          >
+            PR #{prNumber}
+          </a>{' '}
+          {prTitle ? `“${prTitle}”` : ''}.
+        </p>
+        {author?.login ? (
+          <p className="text-xs text-zinc-400">
+            Originally opened by{' '}
+            <span className="font-semibold text-zinc-300">{author.login}</span>
+            {author.name && author.name !== author.login ? ` (${author.name})` : ''}
+          </p>
+        ) : null}
+        {closedBy?.login && closedBy.login !== author?.login ? (
+          <p className="text-xs text-zinc-400">
+            Closed by{' '}
+            <span className="font-semibold text-zinc-300">{closedBy.login}</span>
+            {closedBy.name && closedBy.name !== closedBy.login ? ` (${closedBy.name})` : ''}
+          </p>
+        ) : null}
+      </div>
+    )
+  }
+
+  const { prNumber, prTitle, prUrl, author, mergedBy, commitCount } = item.data
   return (
     <div className="space-y-1 text-sm text-zinc-200">
       <p>
@@ -117,7 +138,15 @@ function ActivitySummary({ item }: { item: ActivityItem }) {
         >
           PR #{prNumber}
         </a>{' '}
-        {prTitle ? `“${prTitle}”` : ''}.
+        {prTitle ? `“${prTitle}”` : ''}
+        {typeof commitCount === 'number' ? (
+          <>
+            {' '}after{' '}
+            <span className="font-semibold">{commitCount}</span>{' '}
+            commit{commitCount === 1 ? '' : 's'}
+          </>
+        ) : null}
+        .
       </p>
       {author?.login ? (
         <p className="text-xs text-zinc-400">
@@ -216,7 +245,7 @@ export default function ActivityView({ org }: ActivityViewProps) {
       <div className="card p-4 space-y-4">
         <div>
           <h2 className="text-lg font-semibold text-zinc-100">Recent activity</h2>
-          <p className="text-sm text-zinc-400">Monitor commits, reviews, and merges across the organization.</p>
+          <p className="text-sm text-zinc-400">Monitor pull request openings, closures, merges, and reviews across the organization.</p>
         </div>
         <div className="flex flex-wrap gap-4">
           <div>
@@ -316,11 +345,6 @@ export default function ActivityView({ org }: ActivityViewProps) {
                 <span className="px-2 py-1 bg-zinc-900 border border-zinc-700 rounded-full font-mono text-[11px]">
                   {item.repo}
                 </span>
-                {item.type === 'commit' && item.data.branch ? (
-                  <span className="px-2 py-1 bg-blue-500/10 border border-blue-500/30 text-blue-200 rounded-full text-[11px] font-mono">
-                    {item.data.branch}
-                  </span>
-                ) : null}
               </div>
             </div>
           </article>

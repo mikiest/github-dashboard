@@ -115,7 +115,7 @@ export interface OrgStats {
   };
 }
 
-export type ActivityType = "commit" | "review" | "merge";
+export type ActivityType = "pr_opened" | "pr_closed" | "pr_merged" | "review";
 
 export interface ActivityUser {
   login: string;
@@ -123,13 +123,21 @@ export interface ActivityUser {
   avatarUrl?: string | null;
 }
 
-export interface ActivityCommitData {
-  type: "commit";
-  branch?: string | null;
-  commitCount: number;
-  message?: string | null;
-  sha?: string | null;
-  url?: string | null;
+export interface ActivityPROpenedData {
+  type: "pr_opened";
+  prNumber: number;
+  prTitle?: string | null;
+  prUrl?: string | null;
+  author?: ActivityUser | null;
+}
+
+export interface ActivityPRClosedData {
+  type: "pr_closed";
+  prNumber: number;
+  prTitle?: string | null;
+  prUrl?: string | null;
+  author?: ActivityUser | null;
+  closedBy?: ActivityUser | null;
 }
 
 export interface ActivityReviewData {
@@ -141,24 +149,17 @@ export interface ActivityReviewData {
   author?: ActivityUser | null;
 }
 
-export interface ActivityMergeData {
-  type: "merge";
+export interface ActivityPRMergedData {
+  type: "pr_merged";
   prNumber: number;
   prTitle?: string | null;
   prUrl?: string | null;
   author?: ActivityUser | null;
   mergedBy?: ActivityUser | null;
+  commitCount?: number | null;
 }
 
 export type ActivityItem =
-  | {
-      id: string;
-      type: "commit";
-      occurredAt: string;
-      repo: string;
-      actor: ActivityUser;
-      data: ActivityCommitData;
-    }
   | {
       id: string;
       type: "review";
@@ -169,11 +170,27 @@ export type ActivityItem =
     }
   | {
       id: string;
-      type: "merge";
+      type: "pr_opened";
       occurredAt: string;
       repo: string;
       actor: ActivityUser;
-      data: ActivityMergeData;
+      data: ActivityPROpenedData;
+    }
+  | {
+      id: string;
+      type: "pr_closed";
+      occurredAt: string;
+      repo: string;
+      actor: ActivityUser;
+      data: ActivityPRClosedData;
+    }
+  | {
+      id: string;
+      type: "pr_merged";
+      occurredAt: string;
+      repo: string;
+      actor: ActivityUser;
+      data: ActivityPRMergedData;
     };
 
 export interface ActivityResponse {
