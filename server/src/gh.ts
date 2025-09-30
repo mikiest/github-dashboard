@@ -461,7 +461,7 @@ export async function ghOrgActivity(org: string, options: ActivityFetchOptions =
     vars.commitFirst = String(commitFirst);
 
     query += `
-      commits: search(query: $commitQuery, type: COMMIT, first: $commitFirst) {
+      commits: search(query: $commitQuery, type: COMMITS, first: $commitFirst) {
         nodes {
           ... on Commit {
             oid
