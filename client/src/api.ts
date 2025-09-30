@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Repo, PREnriched, ReviewerStat, OrgTeam, ViewerInfo, OrgMember, OrgStats } from './types'
+import type { Repo, PREnriched, ReviewerStat, OrgTeam, ViewerInfo, OrgMember, OrgStats, ActivityResponse, ActivityRequest } from './types'
 
 export async function fetchRepos(org: string): Promise<Repo[]> {
   const { data } = await axios.get<{ repos: Repo[] }>(`/api/orgs/${encodeURIComponent(org)}/repos`)
@@ -48,4 +48,20 @@ export async function fetchOrgMembers(org: string): Promise<OrgMember[]> {
 export async function fetchOrgStats(org: string, window: '24h'|'7d'|'30d'): Promise<OrgStats> {
   const { data } = await axios.post<{ stats: OrgStats }>(`/api/orgs/${encodeURIComponent(org)}/stats`, { window })
   return data.stats
+}
+
+export async function fetchActivity(org: string, params: ActivityRequest): Promise<ActivityResponse> {
+  const payload: Record<string, unknown> = {}
+  if (params.types?.length) payload.types = params.types
+  const repo = params.repo?.trim()
+  if (repo) payload.repo = repo
+  const username = params.username?.trim()
+  if (username) payload.username = username
+  const fullname = params.fullname?.trim()
+  if (fullname) payload.fullname = fullname
+  if (params.cursor) payload.cursor = params.cursor
+  if (params.pageSize) payload.pageSize = params.pageSize
+
+  const { data } = await axios.post<ActivityResponse>(`/api/orgs/${encodeURIComponent(org)}/activity`, payload)
+  return data
 }

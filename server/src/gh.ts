@@ -9,6 +9,10 @@ import type {
   OrgStats,
   OrgStatUser,
   OrgStatRepo,
+  ActivityItem,
+  ActivityType,
+  ActivityUser,
+  ActivityResponse,
 } from "./types.js";
 
 // Keep your existing ghRepos() (CLI list). You can migrate it later if you want.
@@ -211,6 +215,453 @@ function batch<T>(arr: T[], size: number) {
   for (let i=0;i<arr.length;i+=size) out.push(arr.slice(i,i+size));
   return out;
 }
+
+type ActivityFetchOptions = {
+  page?: number;
+  perPage?: number;
+  types?: ActivityType[] | null;
+  repo?: string | null;
+  username?: string | null;
+  fullname?: string | null;
+};
+
+function sanitizeLogin(login?: string | null): string | null {
+  if (!login) return null;
+  return String(login).trim();
+}
+
+type ClosedEventNode = {
+  __typename?: string | null;
+  createdAt?: string | null;
+  actor?: {
+    login?: string | null;
+    avatarUrl?: string | null;
+    name?: string | null;
+  } | null;
+};
+
+type PullRequestNode = {
+  id?: string | null;
+  number?: number | null;
+  title?: string | null;
+  url?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  mergedAt?: string | null;
+  closedAt?: string | null;
+  repository?: { nameWithOwner?: string | null } | null;
+  author?: {
+    login?: string | null;
+    avatarUrl?: string | null;
+    name?: string | null;
+  } | null;
+  mergedBy?: {
+    login?: string | null;
+    avatarUrl?: string | null;
+    name?: string | null;
+  } | null;
+  commits?: {
+    totalCount?: number | null;
+  } | null;
+  reviews?: {
+    nodes?: {
+      databaseId?: number | null;
+      state?: string | null;
+      submittedAt?: string | null;
+      updatedAt?: string | null;
+      author?: {
+        login?: string | null;
+        avatarUrl?: string | null;
+        name?: string | null;
+      } | null;
+    }[] | null;
+  } | null;
+  timelineItems?: {
+    nodes?: (ClosedEventNode | null | undefined)[] | null;
+  } | null;
+};
+
+const ACTIVITY_MAX_AGE_DAYS = Number(process.env.ACTIVITY_MAX_AGE_DAYS ?? 90);
+
+function buildPrSearchQuery(org: string, repoFilter?: string | null): string {
+  const terms = [`org:${org}`, "is:pr", "sort:updated-desc"];
+  if (repoFilter && repoFilter.includes("/")) {
+    terms.push(`repo:${repoFilter}`);
+  }
+  return terms.join(" ");
+}
+
+function buildActorFromGraphQL(
+  actor: { login?: string | null; avatarUrl?: string | null; name?: string | null } | null | undefined
+): ActivityUser | null {
+  const login = sanitizeLogin(actor?.login ?? null);
+  if (!login) return null;
+  return {
+    login,
+    name: actor?.name ?? null,
+    avatarUrl: actor?.avatarUrl ?? null,
+  };
+}
+
+function mapPrOpenedNode(pr: PullRequestNode, cutoff: number): ActivityItem | null {
+  const createdAt = pr.createdAt ?? null;
+  const repo = pr.repository?.nameWithOwner ?? null;
+  const prNumber = pr.number ?? null;
+  if (!createdAt || !repo || !prNumber) return null;
+
+  const createdTime = Date.parse(createdAt);
+  if (!Number.isFinite(createdTime) || createdTime < cutoff) return null;
+
+  const author = buildActorFromGraphQL(pr.author ?? null);
+  if (!author) return null;
+
+  return {
+    id: `pr_opened:${pr.id ?? `${repo}:${prNumber}`}:${createdAt}`,
+    type: "pr_opened",
+    occurredAt: new Date(createdTime).toISOString(),
+    repo,
+    actor: author,
+    data: {
+      type: "pr_opened",
+      prNumber,
+      prTitle: pr.title ?? null,
+      prUrl: pr.url ?? null,
+      author,
+    },
+  };
+}
+
+function mapPrClosedNode(pr: PullRequestNode, cutoff: number): ActivityItem | null {
+  const closedAt = pr.closedAt ?? null;
+  if (!closedAt || pr.mergedAt) return null;
+
+  const repo = pr.repository?.nameWithOwner ?? null;
+  const prNumber = pr.number ?? null;
+  if (!repo || !prNumber) return null;
+
+  const closedTime = Date.parse(closedAt);
+  if (!Number.isFinite(closedTime) || closedTime < cutoff) return null;
+
+  const timelineNodes = pr.timelineItems?.nodes ?? [];
+  let closedActor: ActivityUser | null = null;
+
+  for (const node of timelineNodes ?? []) {
+    if (!node || node.__typename !== "ClosedEvent") continue;
+    const nodeTime = node.createdAt ? Date.parse(node.createdAt) : Number.NaN;
+    if (Number.isFinite(nodeTime) && Math.abs(nodeTime - closedTime) <= 60 * 1000) {
+      closedActor = buildActorFromGraphQL(node.actor ?? null);
+      if (closedActor) break;
+    }
+  }
+
+  if (!closedActor) {
+    closedActor = buildActorFromGraphQL(pr.author ?? null);
+  }
+
+  if (!closedActor) return null;
+
+  const author = buildActorFromGraphQL(pr.author ?? null);
+
+  return {
+    id: `pr_closed:${pr.id ?? `${repo}:${prNumber}`}:${closedAt}`,
+    type: "pr_closed",
+    occurredAt: new Date(closedTime).toISOString(),
+    repo,
+    actor: closedActor,
+    data: {
+      type: "pr_closed",
+      prNumber,
+      prTitle: pr.title ?? null,
+      prUrl: pr.url ?? null,
+      author,
+      closedBy: closedActor,
+    },
+  };
+}
+
+function mapReviewNodes(pr: PullRequestNode, cutoff: number): ActivityItem[] {
+  const repo = pr.repository?.nameWithOwner ?? null;
+  const prNumber = pr.number ?? 0;
+  if (!repo || !prNumber) return [];
+
+  const prAuthor = buildActorFromGraphQL(pr.author ?? null);
+  const nodes = pr.reviews?.nodes ?? [];
+  const out: ActivityItem[] = [];
+
+  for (const node of nodes ?? []) {
+    if (!node) continue;
+    const occurredAtRaw = node.submittedAt ?? node.updatedAt ?? null;
+    if (!occurredAtRaw) continue;
+    const occurredTime = Date.parse(occurredAtRaw);
+    if (!Number.isFinite(occurredTime) || occurredTime < cutoff) continue;
+
+    const actor = buildActorFromGraphQL(node.author ?? null);
+    if (!actor) continue;
+
+    const idPart = node.databaseId != null ? String(node.databaseId) : `${pr.id ?? prNumber}:${occurredAtRaw}`;
+
+    out.push({
+      id: `review:${idPart}`,
+      type: "review",
+      occurredAt: new Date(occurredTime).toISOString(),
+      repo,
+      actor,
+      data: {
+        type: "review",
+        state: node.state ?? "COMMENTED",
+        prNumber,
+        prTitle: pr.title ?? null,
+        prUrl: pr.url ?? null,
+        author: prAuthor,
+      },
+    });
+  }
+
+  return out;
+}
+
+function mapMergeNode(pr: PullRequestNode, cutoff: number): ActivityItem | null {
+  const mergedAt = pr.mergedAt ?? null;
+  if (!mergedAt) return null;
+  const mergedTime = Date.parse(mergedAt);
+  if (!Number.isFinite(mergedTime) || mergedTime < cutoff) return null;
+
+  const repo = pr.repository?.nameWithOwner ?? null;
+  if (!repo) return null;
+
+  const mergedBy = buildActorFromGraphQL(pr.mergedBy ?? null);
+  const fallbackActor = buildActorFromGraphQL(pr.author ?? null);
+  const actor = mergedBy ?? fallbackActor;
+  if (!actor) return null;
+
+  const author = buildActorFromGraphQL(pr.author ?? null);
+  const commitCountValue = Number(pr.commits?.totalCount ?? Number.NaN);
+  const commitCount = Number.isFinite(commitCountValue) ? commitCountValue : null;
+
+  return {
+    id: `pr_merged:${pr.id ?? `${repo}:${pr.number ?? ""}`}:${mergedAt}`,
+    type: "pr_merged",
+    occurredAt: new Date(mergedTime).toISOString(),
+    repo,
+    actor,
+    data: {
+      type: "pr_merged",
+      prNumber: pr.number ?? 0,
+      prTitle: pr.title ?? null,
+      prUrl: pr.url ?? null,
+      author,
+      mergedBy,
+      commitCount,
+    },
+  };
+}
+
+export async function ghOrgActivity(org: string, options: ActivityFetchOptions = {}): Promise<ActivityResponse> {
+  const page = Math.max(1, Number.isFinite(options.page) && options.page ? Number(options.page) : 1);
+  const perPageRaw = Number(options.perPage);
+  const perPage = Number.isFinite(perPageRaw) && perPageRaw > 0 ? Math.min(Math.max(perPageRaw, 5), 50) : 30;
+
+  const typeSet = new Set((options.types ?? []).map((t) => t));
+  const needPrOpened = !typeSet.size || typeSet.has("pr_opened");
+  const needPrClosed = !typeSet.size || typeSet.has("pr_closed");
+  const needPrMerged = !typeSet.size || typeSet.has("pr_merged");
+  const needReviews = !typeSet.size || typeSet.has("review");
+  const needPullRequests = needPrOpened || needPrClosed || needPrMerged || needReviews;
+
+  const repoFilter = options.repo?.trim() || null;
+
+  const vars: Record<string, string> = {};
+  const varDefs: string[] = [];
+  let query = "query";
+
+  if (needPullRequests) {
+    varDefs.push("$prQuery:String!", "$prFirst:Int!");
+  }
+
+  if (varDefs.length) {
+    query += `(${varDefs.join(", ")})`;
+  }
+
+  query += " {";
+
+  if (needPullRequests) {
+    const fetchMultiplier = Math.max(3, page + 1);
+    const prFirst = Math.min(100, Math.max(perPage * fetchMultiplier, perPage));
+    vars.prQuery = buildPrSearchQuery(org, repoFilter ?? null);
+    vars.prFirst = String(prFirst);
+
+    query += `
+      prs: search(query: $prQuery, type: ISSUE, first: $prFirst) {
+        nodes {
+          ... on PullRequest {
+            id
+            number
+            title
+            url
+            createdAt
+            updatedAt
+            mergedAt
+            closedAt
+            repository { nameWithOwner }
+            author {
+              login
+              avatarUrl
+              ... on User { name }
+              ... on Organization { name }
+              ... on Mannequin { name }
+              ... on EnterpriseUserAccount { name }
+              ... on Bot { id }
+            }
+            mergedBy {
+              login
+              avatarUrl
+              ... on User { name }
+            }
+            commits { totalCount }
+            reviews(first: 50) {
+              nodes {
+                databaseId
+                state
+                submittedAt
+                updatedAt
+                author {
+                  login
+                  avatarUrl
+                  ... on User { name }
+                  ... on Organization { name }
+                  ... on Mannequin { name }
+                  ... on EnterpriseUserAccount { name }
+                  ... on Bot { id }
+                }
+              }
+            }
+            timelineItems(last: 20, itemTypes: [CLOSED_EVENT]) {
+              nodes {
+                __typename
+                ... on ClosedEvent {
+                  createdAt
+                  actor {
+                    login
+                    avatarUrl
+                    ... on User { name }
+                    ... on Organization { name }
+                    ... on Mannequin { name }
+                    ... on EnterpriseUserAccount { name }
+                    ... on Bot { id }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+  }
+
+  query += "}";
+
+  const data = await runGraphQL(query, vars);
+
+  const cutoffMs = Number.isFinite(ACTIVITY_MAX_AGE_DAYS)
+    ? Date.now() - Math.max(1, ACTIVITY_MAX_AGE_DAYS) * 24 * 60 * 60 * 1000
+    : Date.now() - 90 * 24 * 60 * 60 * 1000;
+
+  const items: ActivityItem[] = [];
+
+  const prNodes: PullRequestNode[] = needPullRequests
+    ? (data?.prs?.nodes ?? []).filter((node: any) => node != null) as PullRequestNode[]
+    : [];
+
+  if (needPrOpened) {
+    for (const pr of prNodes) {
+      const mapped = mapPrOpenedNode(pr, cutoffMs);
+      if (mapped) items.push(mapped);
+    }
+  }
+
+  if (needPrClosed) {
+    for (const pr of prNodes) {
+      const mapped = mapPrClosedNode(pr, cutoffMs);
+      if (mapped) items.push(mapped);
+    }
+  }
+
+  if (needPrMerged) {
+    for (const pr of prNodes) {
+      const mapped = mapMergeNode(pr, cutoffMs);
+      if (mapped) items.push(mapped);
+    }
+  }
+
+  if (needReviews) {
+    for (const pr of prNodes) {
+      items.push(...mapReviewNodes(pr, cutoffMs));
+    }
+  }
+
+  const repoFilterLower = options.repo?.toLowerCase().trim() ?? "";
+  const usernameFilter = options.username?.toLowerCase().trim() ?? "";
+  const fullnameFilter = options.fullname?.toLowerCase().trim() ?? "";
+
+  const filtered = items.filter((item) => {
+    if (typeSet.size && !typeSet.has(item.type)) return false;
+    if (repoFilterLower && !item.repo.toLowerCase().includes(repoFilterLower)) return false;
+
+    if (usernameFilter) {
+      const logins: string[] = [item.actor.login];
+      if (item.type === "review" && item.data.author?.login) logins.push(item.data.author.login);
+      if (item.type === "pr_opened" && item.data.author?.login) {
+        logins.push(item.data.author.login);
+      }
+      if (item.type === "pr_closed") {
+        if (item.data.author?.login) logins.push(item.data.author.login);
+        if (item.data.closedBy?.login) logins.push(item.data.closedBy.login);
+      }
+      if (item.type === "pr_merged") {
+        if (item.data.author?.login) logins.push(item.data.author.login);
+        if (item.data.mergedBy?.login) logins.push(item.data.mergedBy.login);
+      }
+      if (!logins.some((login) => login.toLowerCase().includes(usernameFilter))) {
+        return false;
+      }
+    }
+
+    if (fullnameFilter) {
+      const names: string[] = [];
+      if (item.actor.name) names.push(item.actor.name);
+      if (item.type === "review" && item.data.author?.name) names.push(item.data.author.name);
+      if (item.type === "pr_opened" && item.data.author?.name) {
+        names.push(item.data.author.name);
+      }
+      if (item.type === "pr_closed") {
+        if (item.data.author?.name) names.push(item.data.author.name);
+        if (item.data.closedBy?.name) names.push(item.data.closedBy.name);
+      }
+      if (item.type === "pr_merged") {
+        if (item.data.author?.name) names.push(item.data.author.name);
+        if (item.data.mergedBy?.name) names.push(item.data.mergedBy.name);
+      }
+      if (!names.some((name) => name && name.toLowerCase().includes(fullnameFilter))) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    const aTime = Date.parse(a.occurredAt ?? "");
+    const bTime = Date.parse(b.occurredAt ?? "");
+    return Number.isNaN(bTime) || Number.isNaN(aTime) ? 0 : bTime - aTime;
+  });
+
+  const start = (page - 1) * perPage;
+  const pageItems = start < filtered.length ? filtered.slice(start, start + perPage) : [];
+  const nextCursor = filtered.length > start + perPage ? String(page + 1) : null;
+
+  return { items: pageItems, nextCursor };
+}
+
 
 async function runGraphQL(query: string, vars: Record<string,string|null|undefined> = {}): Promise<any> {
   const args = ["api","graphql","-f",`query=${query}`];

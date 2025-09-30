@@ -114,3 +114,86 @@ export interface OrgStats {
     prsOpened: OrgStatRepo[];
   };
 }
+
+export type ActivityType = "pr_opened" | "pr_closed" | "pr_merged" | "review";
+
+export interface ActivityUser {
+  login: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+}
+
+export interface ActivityPROpenedData {
+  type: "pr_opened";
+  prNumber: number;
+  prTitle?: string | null;
+  prUrl?: string | null;
+  author?: ActivityUser | null;
+}
+
+export interface ActivityPRClosedData {
+  type: "pr_closed";
+  prNumber: number;
+  prTitle?: string | null;
+  prUrl?: string | null;
+  author?: ActivityUser | null;
+  closedBy?: ActivityUser | null;
+}
+
+export interface ActivityReviewData {
+  type: "review";
+  state: string;
+  prNumber: number;
+  prTitle?: string | null;
+  prUrl?: string | null;
+  author?: ActivityUser | null;
+}
+
+export interface ActivityPRMergedData {
+  type: "pr_merged";
+  prNumber: number;
+  prTitle?: string | null;
+  prUrl?: string | null;
+  author?: ActivityUser | null;
+  mergedBy?: ActivityUser | null;
+  commitCount?: number | null;
+}
+
+export type ActivityItem =
+  | {
+      id: string;
+      type: "review";
+      occurredAt: string;
+      repo: string;
+      actor: ActivityUser;
+      data: ActivityReviewData;
+    }
+  | {
+      id: string;
+      type: "pr_opened";
+      occurredAt: string;
+      repo: string;
+      actor: ActivityUser;
+      data: ActivityPROpenedData;
+    }
+  | {
+      id: string;
+      type: "pr_closed";
+      occurredAt: string;
+      repo: string;
+      actor: ActivityUser;
+      data: ActivityPRClosedData;
+    }
+  | {
+      id: string;
+      type: "pr_merged";
+      occurredAt: string;
+      repo: string;
+      actor: ActivityUser;
+      data: ActivityPRMergedData;
+    };
+
+export interface ActivityResponse {
+  items: ActivityItem[];
+  nextCursor: string | null;
+}

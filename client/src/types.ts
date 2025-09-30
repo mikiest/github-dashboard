@@ -84,3 +84,67 @@ export type OrgStats = {
     prsOpened: OrgStatRepo[]
   }
 }
+
+export type ActivityType = 'pr_opened' | 'pr_closed' | 'pr_merged' | 'review'
+
+export type ActivityUser = {
+  login: string
+  name?: string | null
+  avatarUrl?: string | null
+}
+
+export type ActivityPROpenedData = {
+  type: 'pr_opened'
+  prNumber: number
+  prTitle?: string | null
+  prUrl?: string | null
+  author?: ActivityUser | null
+}
+
+export type ActivityPRClosedData = {
+  type: 'pr_closed'
+  prNumber: number
+  prTitle?: string | null
+  prUrl?: string | null
+  author?: ActivityUser | null
+  closedBy?: ActivityUser | null
+}
+
+export type ActivityReviewData = {
+  type: 'review'
+  state: string
+  prNumber: number
+  prTitle?: string | null
+  prUrl?: string | null
+  author?: ActivityUser | null
+}
+
+export type ActivityPRMergedData = {
+  type: 'pr_merged'
+  prNumber: number
+  prTitle?: string | null
+  prUrl?: string | null
+  author?: ActivityUser | null
+  mergedBy?: ActivityUser | null
+  commitCount?: number | null
+}
+
+export type ActivityItem =
+  | { id: string; type: 'review'; occurredAt: string; repo: string; actor: ActivityUser; data: ActivityReviewData }
+  | { id: string; type: 'pr_opened'; occurredAt: string; repo: string; actor: ActivityUser; data: ActivityPROpenedData }
+  | { id: string; type: 'pr_closed'; occurredAt: string; repo: string; actor: ActivityUser; data: ActivityPRClosedData }
+  | { id: string; type: 'pr_merged'; occurredAt: string; repo: string; actor: ActivityUser; data: ActivityPRMergedData }
+
+export type ActivityResponse = {
+  items: ActivityItem[]
+  nextCursor?: string | null
+}
+
+export type ActivityRequest = {
+  types?: ActivityType[]
+  repo?: string
+  username?: string
+  fullname?: string
+  cursor?: string | null
+  pageSize?: number
+}

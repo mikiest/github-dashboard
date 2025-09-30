@@ -5,6 +5,7 @@ import ReviewersView from './components/ReviewersView'
 import ReviewersSidebar from './components/ReviewersSidebar'
 import OrgSelectorModal from './components/OrgSelectorModal'
 import OrgStatsView from './components/OrgStatsView'
+import ActivityView from './components/ActivityView'
 import { loadSettings, saveSettings } from './store'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchTeams, fetchViewer, fetchOrgMembers } from './api'
@@ -22,7 +23,7 @@ export default function App() {
   const [org, setOrg] = useState(loadSettings().org)
   const [username, setUsername] = useState(loadSettings().username)
   const [favorites, setFavorites] = useState<string[]>(loadSettings().favorites)
-  const [tab, setTab] = useState<'org'|'prs'|'reviewers'>('org')
+  const [tab, setTab] = useState<'org'|'prs'|'reviewers'|'activity'>('org')
   const [reviewWindow, setReviewWindow] = useState<'24h'|'7d'|'30d'>('24h')
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
   const [selectedTeams, setSelectedTeams] = useState<string[]>([])
@@ -180,10 +181,13 @@ export default function App() {
             <button onClick={() => setTab('org')} className={`px-3 py-1 text-sm ${tab==='org' ? 'bg-brand-500/20' : ''}`}>Org</button>
             <button onClick={() => setTab('prs')} className={`px-3 py-1 text-sm ${tab==='prs' ? 'bg-brand-500/20' : ''}`}>PRs</button>
             <button onClick={() => setTab('reviewers')} className={`px-3 py-1 text-sm ${tab==='reviewers' ? 'bg-brand-500/20' : ''}`}>Reviews</button>
+            <button onClick={() => setTab('activity')} className={`px-3 py-1 text-sm ${tab==='activity' ? 'bg-brand-500/20' : ''}`}>Activity</button>
           </div>
         </div>
       </header>
-      {tab === 'org' ? (
+      {tab === 'activity' ? (
+        <ActivityView org={org} />
+      ) : tab === 'org' ? (
         <OrgStatsView org={org} windowSel={reviewWindow} onChangeSelected={setReviewWindow} />
       ) : (
         <section className="grid md:grid-cols-3 gap-6">

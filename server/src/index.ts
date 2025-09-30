@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { z } from "zod";
-import { ghRepos, ghPRsAcross, ghTopReviewers, ghOrgTeams, ghViewerInfo, ghOrgMembers, ghOrgStats } from "./gh.js";
+import { ghRepos, ghPRsAcross, ghTopReviewers, ghOrgTeams, ghViewerInfo, ghOrgMembers, ghOrgStats, ghOrgActivity } from "./gh.js";
 
 
 dotenv.config();
@@ -120,6 +120,39 @@ app.post("/api/orgs/:org/stats", async (req, res) => {
     const body = OrgStatsBody.parse(req.body ?? {});
     const stats = await ghOrgStats(org, body.window);
     res.json({ stats });
+  } catch (e: any) {
+    const msg = `${e?.stderr ?? ""} ${e?.message ?? ""}`;
+    if (/rate limit|abuse/i.test(msg) || e?.exitCode === 403) {
+      return res.status(429).json({ error: "GitHub rate limit", retryAfterMs: 60000 });
+    }
+    res.status(400).json({ error: (e as Error).message });
+  }
+});
+
+
+const ActivityBody = z.object({
+  types: z.array(z.enum(["pr_opened", "pr_closed", "pr_merged", "review"])).optional(),
+  repo: z.string().min(1).optional(),
+  username: z.string().min(1).optional(),
+  fullname: z.string().min(1).optional(),
+  cursor: z.string().optional(),
+  pageSize: z.number().int().min(5).max(50).optional(),
+});
+
+app.post("/api/orgs/:org/activity", async (req, res) => {
+  try {
+    const org = z.string().min(1).parse(req.params.org);
+    const body = ActivityBody.parse(req.body ?? {});
+    const page = body.cursor ? Number(body.cursor) : 1;
+    const { items, nextCursor } = await ghOrgActivity(org, {
+      page: Number.isFinite(page) && page > 0 ? page : 1,
+      perPage: body.pageSize,
+      types: body.types ?? null,
+      repo: body.repo ?? null,
+      username: body.username ?? null,
+      fullname: body.fullname ?? null,
+    });
+    res.json({ items, nextCursor });
   } catch (e: any) {
     const msg = `${e?.stderr ?? ""} ${e?.message ?? ""}`;
     if (/rate limit|abuse/i.test(msg) || e?.exitCode === 403) {
