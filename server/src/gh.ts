@@ -9,6 +9,10 @@ import type {
   OrgStats,
   OrgStatUser,
   OrgStatRepo,
+  ActivityItem,
+  ActivityType,
+  ActivityUser,
+  ActivityResponse,
 } from "./types.js";
 
 // Keep your existing ghRepos() (CLI list). You can migrate it later if you want.
@@ -210,6 +214,337 @@ function batch<T>(arr: T[], size: number) {
   const out: T[][] = [];
   for (let i=0;i<arr.length;i+=size) out.push(arr.slice(i,i+size));
   return out;
+}
+
+type ActivityFetchOptions = {
+  page?: number;
+  perPage?: number;
+  types?: ActivityType[] | null;
+  repo?: string | null;
+  username?: string | null;
+  fullname?: string | null;
+};
+
+type RawGitHubEvent = {
+  id?: number | string;
+  type?: string;
+  actor?: {
+    login?: string | null;
+    display_login?: string | null;
+    avatar_url?: string | null;
+  } | null;
+  repo?: { name?: string | null } | null;
+  payload?: any;
+  created_at?: string | null;
+};
+
+function toHtmlUrl(apiUrl?: string | null) {
+  if (!apiUrl) return null;
+  try {
+    const url = new URL(apiUrl);
+    if (url.hostname === "api.github.com") {
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts.length >= 4 && parts[2] === "repos") {
+        const owner = parts[3];
+        const repo = parts[4];
+        if (parts[5] === "pulls" && parts[6]) {
+          return `https://github.com/${owner}/${repo}/pull/${parts[6]}`;
+        }
+        if (parts[5] === "commits" && parts[6]) {
+          return `https://github.com/${owner}/${repo}/commit/${parts[6]}`;
+        }
+      }
+    }
+  } catch (e) {
+    // ignore parsing errors and fall back to provided URL
+  }
+  return apiUrl;
+}
+
+function sanitizeLogin(login?: string | null): string | null {
+  if (!login) return null;
+  return String(login).trim();
+}
+
+function buildActor(event: RawGitHubEvent): ActivityUser | null {
+  const login = sanitizeLogin(event.actor?.login ?? event.actor?.display_login ?? null);
+  if (!login) return null;
+  return {
+    login,
+    name: null,
+    avatarUrl: event.actor?.avatar_url ?? null,
+  };
+}
+
+function normalizeRepoName(event: RawGitHubEvent): string | null {
+  const repo = event.repo?.name ?? null;
+  if (repo) return repo;
+  const pr = event.payload?.pull_request;
+  if (pr?.base?.repo?.full_name) return pr.base.repo.full_name;
+  if (pr?.head?.repo?.full_name) return pr.head.repo.full_name;
+  return null;
+}
+
+function mapEventToActivity(event: RawGitHubEvent): ActivityItem | null {
+  if (!event) return null;
+  const id = event.id != null ? String(event.id) : null;
+  const actor = buildActor(event);
+  const repo = normalizeRepoName(event);
+  if (!id || !actor || !repo) return null;
+
+  if (event.type === "PushEvent") {
+    const commits = Array.isArray(event.payload?.commits) ? event.payload.commits : [];
+    const commitCount = Number(event.payload?.distinct_size ?? commits.length ?? 0) || commits.length;
+    const branchRaw = typeof event.payload?.ref === "string" ? event.payload.ref : null;
+    const branch = branchRaw ? branchRaw.replace(/^refs\/heads\//, "") : null;
+    const firstCommit = commits?.[0] ?? null;
+    const sha = typeof firstCommit?.sha === "string" ? firstCommit.sha : null;
+    const message = typeof firstCommit?.message === "string" ? firstCommit.message : null;
+
+    return {
+      id,
+      type: "commit",
+      occurredAt: event.created_at ?? new Date().toISOString(),
+      repo,
+      actor,
+      data: {
+        type: "commit",
+        branch,
+        commitCount: commitCount || commits.length,
+        message: message ?? null,
+        sha: sha ?? null,
+        url: sha ? `https://github.com/${repo}/commit/${sha}` : toHtmlUrl(firstCommit?.url ?? null),
+      },
+    };
+  }
+
+  if (event.type === "PullRequestReviewEvent") {
+    const review = event.payload?.review;
+    const pr = event.payload?.pull_request;
+    if (!review || !pr) return null;
+    const authorLogin = sanitizeLogin(pr.user?.login ?? null);
+    const reviewState = typeof review.state === "string" ? review.state : "COMMENTED";
+
+    return {
+      id,
+      type: "review",
+      occurredAt: review.submitted_at ?? event.created_at ?? pr.updated_at ?? new Date().toISOString(),
+      repo,
+      actor,
+      data: {
+        type: "review",
+        state: reviewState,
+        prNumber: pr.number ?? 0,
+        prTitle: pr.title ?? null,
+        prUrl: pr.html_url ?? toHtmlUrl(review.html_url ?? pr.url ?? null),
+        author: authorLogin
+          ? {
+              login: authorLogin,
+              name: pr.user?.name ?? null,
+              avatarUrl: pr.user?.avatar_url ?? null,
+            }
+          : null,
+      },
+    };
+  }
+
+  if (event.type === "PullRequestEvent") {
+    const pr = event.payload?.pull_request;
+    if (!pr || !pr.merged || event.payload?.action !== "closed") {
+      return null;
+    }
+    const authorLogin = sanitizeLogin(pr.user?.login ?? null);
+    const mergedByLogin = sanitizeLogin(pr.merged_by?.login ?? null);
+
+    return {
+      id,
+      type: "merge",
+      occurredAt: pr.merged_at ?? event.created_at ?? pr.closed_at ?? new Date().toISOString(),
+      repo,
+      actor,
+      data: {
+        type: "merge",
+        prNumber: pr.number ?? 0,
+        prTitle: pr.title ?? null,
+        prUrl: pr.html_url ?? toHtmlUrl(pr.url ?? null),
+        author: authorLogin
+          ? {
+              login: authorLogin,
+              name: pr.user?.name ?? null,
+              avatarUrl: pr.user?.avatar_url ?? null,
+            }
+          : null,
+        mergedBy: mergedByLogin
+          ? {
+              login: mergedByLogin,
+              name: pr.merged_by?.name ?? null,
+              avatarUrl: pr.merged_by?.avatar_url ?? null,
+            }
+          : null,
+      },
+    };
+  }
+
+  return null;
+}
+
+async function enrichUsers(users: (ActivityUser | null | undefined)[]): Promise<Map<string, ActivityUser>> {
+  const unique = Array.from(
+    new Map(
+      users
+        .map((u) => u?.login)
+        .filter((login): login is string => !!login)
+        .map((login) => [login.toLowerCase(), login] as const)
+    ).values()
+  );
+
+  const result = new Map<string, ActivityUser>();
+  if (!unique.length) return result;
+
+  const batches = chunk(unique, 8);
+  for (const batchLogins of batches) {
+    let query = "query {";
+    batchLogins.forEach((login, idx) => {
+      query += `u${idx}: user(login:"${esc(login)}") { login name avatarUrl }`;
+    });
+    query += "}";
+
+    try {
+      const data = await runGraphQL(query);
+      batchLogins.forEach((login, idx) => {
+        const node = data?.[`u${idx}`];
+        if (node?.login) {
+          result.set(node.login.toLowerCase(), {
+            login: node.login,
+            name: node.name ?? null,
+            avatarUrl: node.avatarUrl ?? null,
+          });
+        }
+      });
+    } catch (e) {
+      // If GraphQL lookup fails, skip enrichment for this batch.
+    }
+  }
+
+  return result;
+}
+
+function mergeUser(base: ActivityUser | null | undefined, enrichments: Map<string, ActivityUser>): ActivityUser | null {
+  if (!base) return null;
+  const match = enrichments.get(base.login.toLowerCase());
+  if (!match) return base;
+  return {
+    login: match.login ?? base.login,
+    name: base.name ?? match.name ?? null,
+    avatarUrl: base.avatarUrl ?? match.avatarUrl ?? null,
+  };
+}
+
+export async function ghOrgActivity(org: string, options: ActivityFetchOptions = {}): Promise<ActivityResponse> {
+  const page = Math.max(1, Number.isFinite(options.page) && options.page ? Number(options.page) : 1);
+  const perPageRaw = Number(options.perPage);
+  const perPage = Number.isFinite(perPageRaw) && perPageRaw > 0 ? Math.min(Math.max(perPageRaw, 5), 50) : 30;
+
+  const args = [
+    "api",
+    `/orgs/${org}/events`,
+    "-F",
+    `per_page=${perPage}`,
+    "-F",
+    `page=${page}`,
+  ];
+
+  const { stdout } = await execa(ghBin, args);
+  const rawEvents: RawGitHubEvent[] = JSON.parse(stdout) ?? [];
+  const mapped = rawEvents
+    .map((evt) => mapEventToActivity(evt))
+    .filter((item): item is ActivityItem => !!item);
+
+  const allUsers: (ActivityUser | null | undefined)[] = [];
+  mapped.forEach((item) => {
+    allUsers.push(item.actor);
+    if (item.type === "review") {
+      allUsers.push(item.data.author ?? null);
+    } else if (item.type === "merge") {
+      allUsers.push(item.data.author ?? null);
+      allUsers.push(item.data.mergedBy ?? null);
+    }
+  });
+
+  const enrichment = await enrichUsers(allUsers);
+  const enriched = mapped.map((item) => {
+    if (item.type === "commit") {
+      return {
+        ...item,
+        actor: mergeUser(item.actor, enrichment)!,
+      };
+    }
+    if (item.type === "review") {
+      return {
+        ...item,
+        actor: mergeUser(item.actor, enrichment)!,
+        data: {
+          ...item.data,
+          author: mergeUser(item.data.author ?? null, enrichment),
+        },
+      };
+    }
+    return {
+      ...item,
+      actor: mergeUser(item.actor, enrichment)!,
+      data: {
+        ...item.data,
+        author: mergeUser(item.data.author ?? null, enrichment),
+        mergedBy: mergeUser(item.data.mergedBy ?? null, enrichment),
+      },
+    };
+  });
+
+  const typeSet = new Set((options.types ?? []).map((t) => t));
+  const repoFilter = options.repo?.toLowerCase().trim() ?? "";
+  const usernameFilter = options.username?.toLowerCase().trim() ?? "";
+  const fullnameFilter = options.fullname?.toLowerCase().trim() ?? "";
+
+  const filtered = enriched.filter((item) => {
+    if (typeSet.size && !typeSet.has(item.type)) return false;
+    if (repoFilter && !item.repo.toLowerCase().includes(repoFilter)) return false;
+
+    if (usernameFilter) {
+      const logins: string[] = [item.actor.login];
+      if (item.type === "review" && item.data.author?.login) logins.push(item.data.author.login);
+      if (item.type === "merge") {
+        if (item.data.author?.login) logins.push(item.data.author.login);
+        if (item.data.mergedBy?.login) logins.push(item.data.mergedBy.login);
+      }
+      if (!logins.some((login) => login.toLowerCase().includes(usernameFilter))) {
+        return false;
+      }
+    }
+
+    if (fullnameFilter) {
+      const names: string[] = [];
+      if (item.actor.name) names.push(item.actor.name);
+      if (item.type === "review" && item.data.author?.name) names.push(item.data.author.name);
+      if (item.type === "merge") {
+        if (item.data.author?.name) names.push(item.data.author.name);
+        if (item.data.mergedBy?.name) names.push(item.data.mergedBy.name);
+      }
+      if (!names.some((name) => name.toLowerCase().includes(fullnameFilter))) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    const aTime = Date.parse(a.occurredAt ?? "");
+    const bTime = Date.parse(b.occurredAt ?? "");
+    return Number.isNaN(bTime) || Number.isNaN(aTime) ? 0 : bTime - aTime;
+  });
+
+  const nextCursor = rawEvents.length >= perPage ? String(page + 1) : null;
+  return { items: filtered, nextCursor };
 }
 
 async function runGraphQL(query: string, vars: Record<string,string|null|undefined> = {}): Promise<any> {

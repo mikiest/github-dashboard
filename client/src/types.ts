@@ -84,3 +84,57 @@ export type OrgStats = {
     prsOpened: OrgStatRepo[]
   }
 }
+
+export type ActivityType = 'commit' | 'review' | 'merge'
+
+export type ActivityUser = {
+  login: string
+  name?: string | null
+  avatarUrl?: string | null
+}
+
+export type ActivityCommitData = {
+  type: 'commit'
+  branch?: string | null
+  commitCount: number
+  message?: string | null
+  sha?: string | null
+  url?: string | null
+}
+
+export type ActivityReviewData = {
+  type: 'review'
+  state: string
+  prNumber: number
+  prTitle?: string | null
+  prUrl?: string | null
+  author?: ActivityUser | null
+}
+
+export type ActivityMergeData = {
+  type: 'merge'
+  prNumber: number
+  prTitle?: string | null
+  prUrl?: string | null
+  author?: ActivityUser | null
+  mergedBy?: ActivityUser | null
+}
+
+export type ActivityItem =
+  | { id: string; type: 'commit'; occurredAt: string; repo: string; actor: ActivityUser; data: ActivityCommitData }
+  | { id: string; type: 'review'; occurredAt: string; repo: string; actor: ActivityUser; data: ActivityReviewData }
+  | { id: string; type: 'merge'; occurredAt: string; repo: string; actor: ActivityUser; data: ActivityMergeData }
+
+export type ActivityResponse = {
+  items: ActivityItem[]
+  nextCursor?: string | null
+}
+
+export type ActivityRequest = {
+  types?: ActivityType[]
+  repo?: string
+  username?: string
+  fullname?: string
+  cursor?: string | null
+  pageSize?: number
+}
