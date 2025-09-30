@@ -225,218 +225,203 @@ type ActivityFetchOptions = {
   fullname?: string | null;
 };
 
-type RawGitHubEvent = {
-  id?: number | string;
-  type?: string;
-  actor?: {
-    login?: string | null;
-    display_login?: string | null;
-    avatar_url?: string | null;
-  } | null;
-  repo?: { name?: string | null } | null;
-  payload?: any;
-  created_at?: string | null;
-};
-
-function toHtmlUrl(apiUrl?: string | null) {
-  if (!apiUrl) return null;
-  try {
-    const url = new URL(apiUrl);
-    if (url.hostname === "api.github.com") {
-      const parts = url.pathname.split("/").filter(Boolean);
-      if (parts.length >= 4 && parts[2] === "repos") {
-        const owner = parts[3];
-        const repo = parts[4];
-        if (parts[5] === "pulls" && parts[6]) {
-          return `https://github.com/${owner}/${repo}/pull/${parts[6]}`;
-        }
-        if (parts[5] === "commits" && parts[6]) {
-          return `https://github.com/${owner}/${repo}/commit/${parts[6]}`;
-        }
-      }
-    }
-  } catch (e) {
-    // ignore parsing errors and fall back to provided URL
-  }
-  return apiUrl;
-}
-
 function sanitizeLogin(login?: string | null): string | null {
   if (!login) return null;
   return String(login).trim();
 }
 
-function buildActor(event: RawGitHubEvent): ActivityUser | null {
-  const login = sanitizeLogin(event.actor?.login ?? event.actor?.display_login ?? null);
+type CommitSearchNode = {
+  oid?: string | null;
+  abbreviatedOid?: string | null;
+  committedDate?: string | null;
+  message?: string | null;
+  messageHeadline?: string | null;
+  url?: string | null;
+  commitUrl?: string | null;
+  repository?: { nameWithOwner?: string | null } | null;
+  author?: {
+    name?: string | null;
+    email?: string | null;
+    user?: {
+      login?: string | null;
+      name?: string | null;
+      avatarUrl?: string | null;
+    } | null;
+  } | null;
+};
+
+type PullRequestNode = {
+  id?: string | null;
+  number?: number | null;
+  title?: string | null;
+  url?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  mergedAt?: string | null;
+  closedAt?: string | null;
+  repository?: { nameWithOwner?: string | null } | null;
+  author?: {
+    login?: string | null;
+    avatarUrl?: string | null;
+    name?: string | null;
+  } | null;
+  mergedBy?: {
+    login?: string | null;
+    avatarUrl?: string | null;
+    name?: string | null;
+  } | null;
+  reviews?: {
+    nodes?: {
+      databaseId?: number | null;
+      state?: string | null;
+      submittedAt?: string | null;
+      updatedAt?: string | null;
+      author?: {
+        login?: string | null;
+        avatarUrl?: string | null;
+        name?: string | null;
+      } | null;
+    }[] | null;
+  } | null;
+};
+
+const ACTIVITY_MAX_AGE_DAYS = Number(process.env.ACTIVITY_MAX_AGE_DAYS ?? 90);
+
+function buildCommitSearchQuery(org: string, repoFilter?: string | null): string {
+  const terms = [`org:${org}`, "sort:committer-date-desc"];
+  if (repoFilter && repoFilter.includes("/")) {
+    terms.push(`repo:${repoFilter}`);
+  }
+  return terms.join(" ");
+}
+
+function buildPrSearchQuery(org: string, repoFilter?: string | null): string {
+  const terms = [`org:${org}`, "is:pr", "sort:updated-desc"];
+  if (repoFilter && repoFilter.includes("/")) {
+    terms.push(`repo:${repoFilter}`);
+  }
+  return terms.join(" ");
+}
+
+function buildActorFromGraphQL(
+  actor: { login?: string | null; avatarUrl?: string | null; name?: string | null } | null | undefined
+): ActivityUser | null {
+  const login = sanitizeLogin(actor?.login ?? null);
   if (!login) return null;
   return {
     login,
-    name: null,
-    avatarUrl: event.actor?.avatar_url ?? null,
+    name: actor?.name ?? null,
+    avatarUrl: actor?.avatarUrl ?? null,
   };
 }
 
-function normalizeRepoName(event: RawGitHubEvent): string | null {
-  const repo = event.repo?.name ?? null;
-  if (repo) return repo;
-  const pr = event.payload?.pull_request;
-  if (pr?.base?.repo?.full_name) return pr.base.repo.full_name;
-  if (pr?.head?.repo?.full_name) return pr.head.repo.full_name;
-  return null;
+function mapCommitNode(node: CommitSearchNode | null | undefined): ActivityItem | null {
+  if (!node) return null;
+  const repo = node.repository?.nameWithOwner ?? null;
+  const user = node.author?.user ?? null;
+  const login = sanitizeLogin(user?.login ?? null);
+  if (!repo || !login) return null;
+
+  const actor: ActivityUser = {
+    login,
+    name: user?.name ?? node.author?.name ?? null,
+    avatarUrl: user?.avatarUrl ?? null,
+  };
+
+  const occurredAt = node.committedDate ?? null;
+  if (!occurredAt) return null;
+
+  const sha = node.oid ?? null;
+  const message = node.messageHeadline ?? node.message ?? null;
+  const url = node.commitUrl ?? node.url ?? (sha ? `https://github.com/${repo}/commit/${sha}` : null);
+
+  return {
+    id: `commit:${sha ?? `${repo}:${occurredAt}`}`,
+    type: "commit",
+    occurredAt,
+    repo,
+    actor,
+    data: {
+      type: "commit",
+      branch: null,
+      commitCount: 1,
+      message: message ?? null,
+      sha,
+      url: url ?? null,
+    },
+  };
 }
 
-function mapEventToActivity(event: RawGitHubEvent): ActivityItem | null {
-  if (!event) return null;
-  const id = event.id != null ? String(event.id) : null;
-  const actor = buildActor(event);
-  const repo = normalizeRepoName(event);
-  if (!id || !actor || !repo) return null;
+function mapReviewNodes(pr: PullRequestNode, cutoff: number): ActivityItem[] {
+  const repo = pr.repository?.nameWithOwner ?? null;
+  const prNumber = pr.number ?? 0;
+  if (!repo || !prNumber) return [];
 
-  if (event.type === "PushEvent") {
-    const commits = Array.isArray(event.payload?.commits) ? event.payload.commits : [];
-    const commitCount = Number(event.payload?.distinct_size ?? commits.length ?? 0) || commits.length;
-    const branchRaw = typeof event.payload?.ref === "string" ? event.payload.ref : null;
-    const branch = branchRaw ? branchRaw.replace(/^refs\/heads\//, "") : null;
-    const firstCommit = commits?.[0] ?? null;
-    const sha = typeof firstCommit?.sha === "string" ? firstCommit.sha : null;
-    const message = typeof firstCommit?.message === "string" ? firstCommit.message : null;
+  const prAuthor = buildActorFromGraphQL(pr.author ?? null);
+  const nodes = pr.reviews?.nodes ?? [];
+  const out: ActivityItem[] = [];
 
-    return {
-      id,
-      type: "commit",
-      occurredAt: event.created_at ?? new Date().toISOString(),
-      repo,
-      actor,
-      data: {
-        type: "commit",
-        branch,
-        commitCount: commitCount || commits.length,
-        message: message ?? null,
-        sha: sha ?? null,
-        url: sha ? `https://github.com/${repo}/commit/${sha}` : toHtmlUrl(firstCommit?.url ?? null),
-      },
-    };
-  }
+  for (const node of nodes ?? []) {
+    if (!node) continue;
+    const occurredAtRaw = node.submittedAt ?? node.updatedAt ?? null;
+    if (!occurredAtRaw) continue;
+    const occurredTime = Date.parse(occurredAtRaw);
+    if (!Number.isFinite(occurredTime) || occurredTime < cutoff) continue;
 
-  if (event.type === "PullRequestReviewEvent") {
-    const review = event.payload?.review;
-    const pr = event.payload?.pull_request;
-    if (!review || !pr) return null;
-    const authorLogin = sanitizeLogin(pr.user?.login ?? null);
-    const reviewState = typeof review.state === "string" ? review.state : "COMMENTED";
+    const actor = buildActorFromGraphQL(node.author ?? null);
+    if (!actor) continue;
 
-    return {
-      id,
+    const idPart = node.databaseId != null ? String(node.databaseId) : `${pr.id ?? prNumber}:${occurredAtRaw}`;
+
+    out.push({
+      id: `review:${idPart}`,
       type: "review",
-      occurredAt: review.submitted_at ?? event.created_at ?? pr.updated_at ?? new Date().toISOString(),
+      occurredAt: new Date(occurredTime).toISOString(),
       repo,
       actor,
       data: {
         type: "review",
-        state: reviewState,
-        prNumber: pr.number ?? 0,
+        state: node.state ?? "COMMENTED",
+        prNumber,
         prTitle: pr.title ?? null,
-        prUrl: pr.html_url ?? toHtmlUrl(review.html_url ?? pr.url ?? null),
-        author: authorLogin
-          ? {
-              login: authorLogin,
-              name: pr.user?.name ?? null,
-              avatarUrl: pr.user?.avatar_url ?? null,
-            }
-          : null,
+        prUrl: pr.url ?? null,
+        author: prAuthor,
       },
-    };
-  }
-
-  if (event.type === "PullRequestEvent") {
-    const pr = event.payload?.pull_request;
-    if (!pr || !pr.merged || event.payload?.action !== "closed") {
-      return null;
-    }
-    const authorLogin = sanitizeLogin(pr.user?.login ?? null);
-    const mergedByLogin = sanitizeLogin(pr.merged_by?.login ?? null);
-
-    return {
-      id,
-      type: "merge",
-      occurredAt: pr.merged_at ?? event.created_at ?? pr.closed_at ?? new Date().toISOString(),
-      repo,
-      actor,
-      data: {
-        type: "merge",
-        prNumber: pr.number ?? 0,
-        prTitle: pr.title ?? null,
-        prUrl: pr.html_url ?? toHtmlUrl(pr.url ?? null),
-        author: authorLogin
-          ? {
-              login: authorLogin,
-              name: pr.user?.name ?? null,
-              avatarUrl: pr.user?.avatar_url ?? null,
-            }
-          : null,
-        mergedBy: mergedByLogin
-          ? {
-              login: mergedByLogin,
-              name: pr.merged_by?.name ?? null,
-              avatarUrl: pr.merged_by?.avatar_url ?? null,
-            }
-          : null,
-      },
-    };
-  }
-
-  return null;
-}
-
-async function enrichUsers(users: (ActivityUser | null | undefined)[]): Promise<Map<string, ActivityUser>> {
-  const unique = Array.from(
-    new Map(
-      users
-        .map((u) => u?.login)
-        .filter((login): login is string => !!login)
-        .map((login) => [login.toLowerCase(), login] as const)
-    ).values()
-  );
-
-  const result = new Map<string, ActivityUser>();
-  if (!unique.length) return result;
-
-  const batches = chunk(unique, 8);
-  for (const batchLogins of batches) {
-    let query = "query {";
-    batchLogins.forEach((login, idx) => {
-      query += `u${idx}: user(login:"${esc(login)}") { login name avatarUrl }`;
     });
-    query += "}";
-
-    try {
-      const data = await runGraphQL(query);
-      batchLogins.forEach((login, idx) => {
-        const node = data?.[`u${idx}`];
-        if (node?.login) {
-          result.set(node.login.toLowerCase(), {
-            login: node.login,
-            name: node.name ?? null,
-            avatarUrl: node.avatarUrl ?? null,
-          });
-        }
-      });
-    } catch (e) {
-      // If GraphQL lookup fails, skip enrichment for this batch.
-    }
   }
 
-  return result;
+  return out;
 }
 
-function mergeUser(base: ActivityUser | null | undefined, enrichments: Map<string, ActivityUser>): ActivityUser | null {
-  if (!base) return null;
-  const match = enrichments.get(base.login.toLowerCase());
-  if (!match) return base;
+function mapMergeNode(pr: PullRequestNode, cutoff: number): ActivityItem | null {
+  const mergedAt = pr.mergedAt ?? null;
+  if (!mergedAt) return null;
+  const mergedTime = Date.parse(mergedAt);
+  if (!Number.isFinite(mergedTime) || mergedTime < cutoff) return null;
+
+  const repo = pr.repository?.nameWithOwner ?? null;
+  if (!repo) return null;
+
+  const actor = buildActorFromGraphQL(pr.mergedBy ?? pr.author ?? null);
+  if (!actor) return null;
+
+  const author = buildActorFromGraphQL(pr.author ?? null);
+  const mergedBy = buildActorFromGraphQL(pr.mergedBy ?? null);
+
   return {
-    login: match.login ?? base.login,
-    name: base.name ?? match.name ?? null,
-    avatarUrl: base.avatarUrl ?? match.avatarUrl ?? null,
+    id: `merge:${pr.id ?? `${repo}:${pr.number ?? ""}`}:${mergedAt}`,
+    type: "merge",
+    occurredAt: new Date(mergedTime).toISOString(),
+    repo,
+    actor,
+    data: {
+      type: "merge",
+      prNumber: pr.number ?? 0,
+      prTitle: pr.title ?? null,
+      prUrl: pr.url ?? null,
+      author,
+      mergedBy,
+    },
   };
 }
 
@@ -445,69 +430,163 @@ export async function ghOrgActivity(org: string, options: ActivityFetchOptions =
   const perPageRaw = Number(options.perPage);
   const perPage = Number.isFinite(perPageRaw) && perPageRaw > 0 ? Math.min(Math.max(perPageRaw, 5), 50) : 30;
 
-  const args = [
-    "api",
-    `/orgs/${org}/events`,
-    "-F",
-    `per_page=${perPage}`,
-    "-F",
-    `page=${page}`,
-  ];
-
-  const { stdout } = await execa(ghBin, args);
-  const rawEvents: RawGitHubEvent[] = JSON.parse(stdout) ?? [];
-  const mapped = rawEvents
-    .map((evt) => mapEventToActivity(evt))
-    .filter((item): item is ActivityItem => !!item);
-
-  const allUsers: (ActivityUser | null | undefined)[] = [];
-  mapped.forEach((item) => {
-    allUsers.push(item.actor);
-    if (item.type === "review") {
-      allUsers.push(item.data.author ?? null);
-    } else if (item.type === "merge") {
-      allUsers.push(item.data.author ?? null);
-      allUsers.push(item.data.mergedBy ?? null);
-    }
-  });
-
-  const enrichment = await enrichUsers(allUsers);
-  const enriched = mapped.map((item) => {
-    if (item.type === "commit") {
-      return {
-        ...item,
-        actor: mergeUser(item.actor, enrichment)!,
-      };
-    }
-    if (item.type === "review") {
-      return {
-        ...item,
-        actor: mergeUser(item.actor, enrichment)!,
-        data: {
-          ...item.data,
-          author: mergeUser(item.data.author ?? null, enrichment),
-        },
-      };
-    }
-    return {
-      ...item,
-      actor: mergeUser(item.actor, enrichment)!,
-      data: {
-        ...item.data,
-        author: mergeUser(item.data.author ?? null, enrichment),
-        mergedBy: mergeUser(item.data.mergedBy ?? null, enrichment),
-      },
-    };
-  });
-
   const typeSet = new Set((options.types ?? []).map((t) => t));
-  const repoFilter = options.repo?.toLowerCase().trim() ?? "";
+  const needCommits = !typeSet.size || typeSet.has("commit");
+  const needReviews = !typeSet.size || typeSet.has("review");
+  const needMerges = !typeSet.size || typeSet.has("merge");
+
+  const repoFilter = options.repo?.trim() || null;
+
+  const vars: Record<string, string> = {};
+  const varDefs: string[] = [];
+  let query = "query";
+
+  if (needCommits) {
+    varDefs.push("$commitQuery:String!", "$commitFirst:Int!");
+  }
+  if (needReviews || needMerges) {
+    varDefs.push("$prQuery:String!", "$prFirst:Int!");
+  }
+
+  if (varDefs.length) {
+    query += `(${varDefs.join(", ")})`;
+  }
+
+  query += " {";
+
+  if (needCommits) {
+    const fetchMultiplier = Math.max(3, page + 1);
+    const commitFirst = Math.min(100, Math.max(perPage * fetchMultiplier, perPage));
+    vars.commitQuery = buildCommitSearchQuery(org, repoFilter ?? null);
+    vars.commitFirst = String(commitFirst);
+
+    query += `
+      commits: search(query: $commitQuery, type: COMMIT, first: $commitFirst) {
+        nodes {
+          ... on Commit {
+            oid
+            abbreviatedOid
+            committedDate
+            message
+            messageHeadline
+            url
+            commitUrl
+            repository { nameWithOwner }
+            author {
+              name
+              email
+              user {
+                login
+                name
+                avatarUrl
+              }
+            }
+          }
+        }
+      }
+    `;
+  }
+
+  if (needReviews || needMerges) {
+    const fetchMultiplier = Math.max(3, page + 1);
+    const prFirst = Math.min(100, Math.max(perPage * fetchMultiplier, perPage));
+    vars.prQuery = buildPrSearchQuery(org, repoFilter ?? null);
+    vars.prFirst = String(prFirst);
+
+    query += `
+      prs: search(query: $prQuery, type: ISSUE, first: $prFirst) {
+        nodes {
+          ... on PullRequest {
+            id
+            number
+            title
+            url
+            createdAt
+            updatedAt
+            mergedAt
+            closedAt
+            repository { nameWithOwner }
+            author {
+              login
+              avatarUrl
+              ... on User { name }
+              ... on Organization { name }
+              ... on Mannequin { name }
+              ... on EnterpriseUserAccount { name }
+              ... on Bot { id }
+            }
+            mergedBy {
+              login
+              avatarUrl
+              ... on User { name }
+            }
+            reviews(last: 20) {
+              nodes {
+                databaseId
+                state
+                submittedAt
+                updatedAt
+                author {
+                  login
+                  avatarUrl
+                  ... on User { name }
+                  ... on Organization { name }
+                  ... on Mannequin { name }
+                  ... on EnterpriseUserAccount { name }
+                  ... on Bot { id }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+  }
+
+  query += "}";
+
+  const data = await runGraphQL(query, vars);
+
+  const cutoffMs = Number.isFinite(ACTIVITY_MAX_AGE_DAYS)
+    ? Date.now() - Math.max(1, ACTIVITY_MAX_AGE_DAYS) * 24 * 60 * 60 * 1000
+    : Date.now() - 90 * 24 * 60 * 60 * 1000;
+
+  const items: ActivityItem[] = [];
+
+  if (needCommits) {
+    const commitNodes: (CommitSearchNode | null | undefined)[] = data?.commits?.nodes ?? [];
+    for (const node of commitNodes) {
+      const mapped = mapCommitNode(node);
+      if (!mapped) continue;
+      const occurredTime = Date.parse(mapped.occurredAt);
+      if (Number.isFinite(occurredTime) && occurredTime >= cutoffMs) {
+        items.push(mapped);
+      }
+    }
+  }
+
+  const prNodes: PullRequestNode[] = (data?.prs?.nodes ?? []).filter((node: any) => node != null) as PullRequestNode[];
+
+  if (needReviews) {
+    for (const pr of prNodes) {
+      items.push(...mapReviewNodes(pr, cutoffMs));
+    }
+  }
+
+  if (needMerges) {
+    for (const pr of prNodes) {
+      const mapped = mapMergeNode(pr, cutoffMs);
+      if (mapped) items.push(mapped);
+    }
+  }
+
+  const repoFilterLower = options.repo?.toLowerCase().trim() ?? "";
   const usernameFilter = options.username?.toLowerCase().trim() ?? "";
   const fullnameFilter = options.fullname?.toLowerCase().trim() ?? "";
 
-  const filtered = enriched.filter((item) => {
+  const filtered = items.filter((item) => {
     if (typeSet.size && !typeSet.has(item.type)) return false;
-    if (repoFilter && !item.repo.toLowerCase().includes(repoFilter)) return false;
+    if (repoFilterLower && !item.repo.toLowerCase().includes(repoFilterLower)) return false;
 
     if (usernameFilter) {
       const logins: string[] = [item.actor.login];
@@ -529,7 +608,7 @@ export async function ghOrgActivity(org: string, options: ActivityFetchOptions =
         if (item.data.author?.name) names.push(item.data.author.name);
         if (item.data.mergedBy?.name) names.push(item.data.mergedBy.name);
       }
-      if (!names.some((name) => name.toLowerCase().includes(fullnameFilter))) {
+      if (!names.some((name) => name && name.toLowerCase().includes(fullnameFilter))) {
         return false;
       }
     }
@@ -543,9 +622,13 @@ export async function ghOrgActivity(org: string, options: ActivityFetchOptions =
     return Number.isNaN(bTime) || Number.isNaN(aTime) ? 0 : bTime - aTime;
   });
 
-  const nextCursor = rawEvents.length >= perPage ? String(page + 1) : null;
-  return { items: filtered, nextCursor };
+  const start = (page - 1) * perPage;
+  const pageItems = start < filtered.length ? filtered.slice(start, start + perPage) : [];
+  const nextCursor = filtered.length > start + perPage ? String(page + 1) : null;
+
+  return { items: pageItems, nextCursor };
 }
+
 
 async function runGraphQL(query: string, vars: Record<string,string|null|undefined> = {}): Promise<any> {
   const args = ["api","graphql","-f",`query=${query}`];
